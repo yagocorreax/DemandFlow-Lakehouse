@@ -1,0 +1,49 @@
+# Variáveis de ambiente e credenciais
+.env
+.env.local
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Visual Studio Code
+.vscode/
+
+# IntelliJ e PyCharm
+.idea/
+
+# Arquivos temporários
+*.log
+*.tmp
+*.temp
+
+# Sistema operacional
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Dados locais
+data/
+logs/
+checkpoints/
+
+# Docker
+docker-data/
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+.terraform.lock.hcl
+
+# Segredos do LocalStack
+.localstack/
