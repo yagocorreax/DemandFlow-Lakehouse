@@ -29,3 +29,36 @@ Raw → Bronze → Silver → Gold
 Trino
     ↓
 Apache Superset
+```
+
+## Tecnologias
+
+- Python
+- PostgreSQL
+- Docker
+- LocalStack (AWS enviroment)
+- Apache Kafka
+- Debezium
+- Apache Spark
+- Delta Lake
+- Apache Airflow
+- Trino
+- Apache Superset
+- Pytest
+- GitHub Actions
+
+## Contexto
+
+A aplicação representará uma empresa fictícia com dados de:
+
+- produtos;
+- vendas;
+- pedidos;
+- estoque;
+- lojas;
+- promoções;
+- previsões de demanda.
+
+### Status
+
+**Em desenvolvimento**
