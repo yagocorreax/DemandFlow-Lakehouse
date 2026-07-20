@@ -27,11 +27,6 @@ htmlcov/
 Thumbs.db
 desktop.ini
 
-# Dados locais
-data/
-logs/
-checkpoints/
-
 # Terraform
 .terraform/
 *.tfstate
