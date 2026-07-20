@@ -31,7 +31,6 @@ desktop.ini
 .terraform/
 *.tfstate
 *.tfstate.*
-.terraform.lock.hcl
 
 # Segredos do LocalStack
 .localstack/
