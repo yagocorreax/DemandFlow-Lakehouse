@@ -1,6 +1,5 @@
 # Variáveis de ambiente e credenciais
 .env
-.env.local
 *.pem
 *.key
 
@@ -32,9 +31,6 @@ desktop.ini
 data/
 logs/
 checkpoints/
-
-# Docker
-docker-data/
 
 # Terraform
 .terraform/
