@@ -35,8 +35,19 @@ services:
       timeout: 5s
       retries: 10
 
+  localstack:
+    image: localstack/localstack:latest
+    container_name: demandflow-localstack
+    restart: unless-stopped
+
+    environment:
+      LOCALSTACK_AUTH_TOKEN: ${LOCALSTACK_AUTH_TOKEN}
+      AWS_DEFAULT_REGION: ${AWS_REGION}
+      DEBUG: "0"
+
+    ports:
+      - "4566:4566"
+
 volumes:
   demandflow_postgres_data:
-
-## Cria e configura um postgres 16 com persitência de dados, inicialização automática
-## verificação de saúde e suporte a replicação lógica/CDC
+  
