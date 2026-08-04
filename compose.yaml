@@ -47,6 +47,29 @@ services:
 
     ports:
       - "4566:4566"
+  spark:
+    image: apache/spark:3.5.9-scala2.12-java17-python3-r-ubuntu
+
+    profiles:
+      - processing
+
+    working_dir: /opt/demandflow
+
+    environment:
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_DEFAULT_REGION: ${AWS_REGION}
+      LOCALSTACK_INTERNAL_ENDPOINT: ${LOCALSTACK_INTERNAL_ENDPOINT}
+      PYSPARK_PYTHON: python3
+
+    depends_on:
+      - localstack
+
+    volumes:
+      - ./src:/opt/demandflow/src:ro
+
+    mem_limit: 3g
+    cpus: "2.0"
 
 volumes:
   demandflow_postgres_data:
