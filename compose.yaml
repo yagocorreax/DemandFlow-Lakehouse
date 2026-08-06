@@ -71,6 +71,92 @@ services:
     mem_limit: 3g
     cpus: "2.0"
 
+  hive-metastore-init:
+    image: alpine:3.20
+    container_name: demandflow-hive-metastore-init
+
+    profiles:
+      - query
+
+    user: "0:0"
+
+    command:
+      - sh
+      - -c
+      - |
+        chown -R 1000:1000 /opt/hive/data
+        chmod -R u+rwX /opt/hive/data
+
+    volumes:
+      - demandflow_hive_metastore_data:/opt/hive/data
+
+    restart: "no"
+
+  hive-metastore:
+    build:
+      context: .
+      dockerfile: infra/hive-metastore/Dockerfile
+
+    image: demandflow-hive-metastore:4.0.0-s3
+    container_name: demandflow-hive-metastore
+    restart: unless-stopped
+
+    profiles:
+      - query
+
+    environment:
+      SERVICE_NAME: metastore
+      DB_DRIVER: derby
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_DEFAULT_REGION: us-east-1
+      HADOOP_CONF_DIR: /opt/hadoop/etc/hadoop
+
+      SERVICE_OPTS: >-
+        -Djavax.jdo.option.ConnectionURL=jdbc:derby:;databaseName=/opt/hive/data/metastore_db;create=true
+        -Djavax.jdo.option.ConnectionDriverName=org.apache.derby.jdbc.EmbeddedDriver
+
+    depends_on:
+      - localstack
+
+    ports:
+      - "9083:9083"
+
+    volumes:
+      - demandflow_hive_metastore_data:/opt/hive/data
+      - ./infra/hive-metastore/core-site.xml:/opt/hadoop/etc/hadoop/core-site.xml:ro
+
+    mem_limit: 1g
+    cpus: "1.0"
+
+  trino:
+    image: trinodb/trino:483
+    container_name: demandflow-trino
+    restart: unless-stopped
+
+    profiles:
+      - query
+
+    environment:
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+
+    depends_on:
+      localstack:
+        condition: service_started
+
+      hive-metastore-init:
+        condition: service_completed_successfully
+
+    ports:
+      - "8080:8080"
+
+    volumes:
+      - ./infra/trino/catalog:/etc/trino/catalog:ro
+
+    mem_limit: 2g
+    cpus: "2.0"
+
 volumes:
   demandflow_postgres_data:
-  
+  demandflow_hive_metastore_data:
