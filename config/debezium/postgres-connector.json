@@ -1,0 +1,39 @@
+{
+  "name": "demandflow-postgres-connector",
+  "config": {
+    "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+    "tasks.max": "1",
+
+    "database.hostname": "postgres",
+    "database.port": "5432",
+
+    "database.user": "__FROM_ENV__",
+    "database.password": "__FROM_ENV__",
+    "database.dbname": "__FROM_ENV__",
+
+    "topic.prefix": "demandflow",
+
+    "plugin.name": "pgoutput",
+
+    "slot.name": "demandflow_slot",
+    "slot.drop.on.stop": "false",
+
+    "publication.name": "demandflow_publication",
+    "publication.autocreate.mode": "disabled",
+
+    "snapshot.mode": "initial",
+
+    "schema.include.list": "public",
+
+    "include.schema.changes": "false",
+
+    "decimal.handling.mode": "string",
+
+    "tombstones.on.delete": "false",
+
+    "heartbeat.interval.ms": "10000",
+
+    "topic.creation.default.replication.factor": "1",
+    "topic.creation.default.partitions": "3"
+  }
+}
