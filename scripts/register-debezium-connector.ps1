@@ -20,7 +20,7 @@ function Get-DotEnvValue {
         Select-Object -Last 1
 
     if (-not $line) {
-        throw "Variável $Name não encontrada."
+        throw "Variável $Name não encontrada no .env."
     }
 
     return (($line -split "=", 2)[1]).Trim().Trim('"').Trim("'")
@@ -35,9 +35,15 @@ $database = Get-DotEnvValue "POSTGRES_DATABASE"
 Push-Location $projectRoot
 
 try {
+    Write-Host "Iniciando infraestrutura CDC..."
+
     docker compose `
         --profile cdc `
         up -d postgres kafka debezium
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "Falha ao iniciar infraestrutura CDC."
+    }
 
     Write-Host "Aguardando Kafka Connect..."
 
@@ -62,6 +68,8 @@ try {
         throw "Kafka Connect não ficou disponível."
     }
 
+    Write-Host "Kafka Connect disponível."
+
     $payload = Get-Content $configFile -Raw |
         ConvertFrom-Json
 
@@ -71,65 +79,82 @@ try {
 
     $connectorName = $payload.name
 
-    $existing = @(
-        Invoke-RestMethod `
-            -Uri "$connectUrl/connectors"
-    )
+    Write-Host "Configurando connector $connectorName..."
 
-    if ($existing -contains $connectorName) {
+    #
+    # PUT é usado tanto para criar quanto para atualizar.
+    # Isso torna o script idempotente.
+    #
+    $body = $payload.config |
+        ConvertTo-Json -Depth 20
 
-        Write-Host "Atualizando conector..."
+    Invoke-RestMethod `
+        -Uri "$connectUrl/connectors/$connectorName/config" `
+        -Method Put `
+        -ContentType "application/json" `
+        -Body $body |
+        Out-Null
 
-        $body = $payload.config |
-            ConvertTo-Json -Depth 20
+    Write-Host "Aguardando connector ficar RUNNING..."
 
-        Invoke-RestMethod `
-            -Uri "$connectUrl/connectors/$connectorName/config" `
-            -Method Put `
-            -ContentType "application/json" `
-            -Body $body |
-            Out-Null
-    }
-    else {
+    $running = $false
 
-        Write-Host "Criando conector..."
+    for ($i = 1; $i -le 60; $i++) {
+        try {
+            $status = Invoke-RestMethod `
+                -Uri "$connectUrl/connectors/$connectorName/status"
 
-        $body = $payload |
-            ConvertTo-Json -Depth 20
+            $connectorRunning = (
+                $status.connector.state -eq "RUNNING"
+            )
 
-        Invoke-RestMethod `
-            -Uri "$connectUrl/connectors" `
-            -Method Post `
-            -ContentType "application/json" `
-            -Body $body |
-            Out-Null
-    }
+            $tasks = @($status.tasks)
 
-    Start-Sleep -Seconds 5
+            $tasksRunning = (
+                $tasks.Count -gt 0 -and
+                @(
+                    $tasks |
+                    Where-Object {
+                        $_.state -ne "RUNNING"
+                    }
+                ).Count -eq 0
+            )
 
-    $status = Invoke-RestMethod `
-        -Uri "$connectUrl/connectors/$connectorName/status"
+            $failedTask = $tasks |
+                Where-Object {
+                    $_.state -eq "FAILED"
+                } |
+                Select-Object -First 1
 
-    $status |
-        ConvertTo-Json -Depth 10
+            if ($failedTask) {
+                throw (
+                    "Task do connector falhou:`n" +
+                    $failedTask.trace
+                )
+            }
 
-    if ($status.connector.state -ne "RUNNING") {
-        throw "O conector não está RUNNING."
-    }
-
-    $failed = @(
-        $status.tasks |
-        Where-Object {
-            $_.state -eq "FAILED"
+            if ($connectorRunning -and $tasksRunning) {
+                $running = $true
+                break
+            }
         }
-    )
+        catch {
+            if ($_.Exception.Message -like "*Task do connector falhou*") {
+                throw
+            }
+        }
 
-    if ($failed.Count -gt 0) {
-        throw $failed[0].trace
+        Start-Sleep -Seconds 2
+    }
+
+    if (-not $running) {
+        throw "O connector não ficou RUNNING."
     }
 
     Write-Host ""
-    Write-Host "Conector Debezium funcionando."
+    Write-Host "Connector Debezium configurado com sucesso."
+    Write-Host "Nome: $connectorName"
+    Write-Host "Status: RUNNING"
 }
 finally {
     Pop-Location
