@@ -59,6 +59,17 @@ A aplicação representará uma empresa fictícia com dados de:
 - promoções;
 - previsões de demanda.
 
-### Status
+## Status
+
+- [x] PostgreSQL transacional
+- [x] Gerador de dados
+- [x] LocalStack com S3 local
+- [x] Spark + Delta Lake integrado ao S3 local
+- [x] Hive Metastore e Trino
+- [x] CDC real com Kafka e Debezium
+- [x] Camada Raw imutável
+- [ ] Camada Bronze
+- [ ] Camada Silver
+- [ ] Camada Gold
 
 **Em desenvolvimento**
