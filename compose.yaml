@@ -44,9 +44,13 @@ services:
       LOCALSTACK_AUTH_TOKEN: ${LOCALSTACK_AUTH_TOKEN}
       AWS_DEFAULT_REGION: ${AWS_REGION}
       DEBUG: "0"
+      PERSISTENCE: "1"
 
     ports:
       - "4566:4566"
+
+    volumes:
+      - demandflow_localstack_data:/var/lib/localstack
   spark:
     image: apache/spark:3.5.9-scala2.12-java17-python3-r-ubuntu
 
@@ -67,6 +71,8 @@ services:
       RAW_S3_PATH: ${RAW_S3_PATH}
       RAW_CHECKPOINT_PATH: ${RAW_CHECKPOINT_PATH}
 
+      BRONZE_S3_PATH: ${BRONZE_S3_PATH}
+
       PYSPARK_PYTHON: python3
 
     depends_on:
@@ -74,6 +80,7 @@ services:
 
     volumes:
       - ./src:/opt/demandflow/src:ro
+      - ./config:/opt/demandflow/config:ro
 
     mem_limit: 3g
     cpus: "2.0"
@@ -219,16 +226,13 @@ services:
     healthcheck:
       test:
         [
-          "CMD-SHELL",
-          "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1"
-        ]
+        "CMD-SHELL",
+        "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:29092 > /dev/null 2>&1"
+      ]
       interval: 10s
-      timeout: 5s
-      retries: 12
-      start_period: 20s
-
-    mem_limit: 1g
-    cpus: "1.5"
+      timeout: 10s
+      retries: 20
+      start_period: 40s
 
   debezium:
     image: quay.io/debezium/connect:3.6
@@ -276,3 +280,4 @@ volumes:
   demandflow_postgres_data:
   demandflow_hive_metastore_data:
   demandflow_kafka_data:
+  demandflow_localstack_data:

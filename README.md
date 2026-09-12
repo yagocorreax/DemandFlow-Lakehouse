@@ -61,6 +61,8 @@ A aplicação representará uma empresa fictícia com dados de:
 
 ## Status
 
+## Status
+
 - [x] PostgreSQL transacional
 - [x] Gerador de dados
 - [x] LocalStack com S3 local
@@ -68,8 +70,8 @@ A aplicação representará uma empresa fictícia com dados de:
 - [x] Hive Metastore e Trino
 - [x] CDC real com Kafka e Debezium
 - [x] Camada Raw imutável
-- [ ] Camada Bronze
-- [ ] Camada Silver
+- [x] Bronze Events e Bronze Current
+- [ ] Camada Silver e Data Quality
 - [ ] Camada Gold
 
 **Em desenvolvimento**
