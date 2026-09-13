@@ -154,10 +154,16 @@ def main() -> None:
             )
             .withColumn(
                 "operation",
-                F.get_json_object(
-                    F.col("kafka_value"),
-                    "$.op",
+                F.coalesce(
+        F.get_json_object(
+            F.col("kafka_value"),
+            "$.op",
+        ),
+        F.get_json_object(
+            F.col("kafka_value"),
+            "$.payload.op",
                 ),
+            )
             )
             .withColumn(
                 "load_type",

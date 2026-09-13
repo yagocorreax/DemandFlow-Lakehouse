@@ -1,0 +1,105 @@
+{
+  "stores": {
+    "primary_key": ["store_id"],
+    "columns": {
+      "store_id": "integer",
+      "store_code": "string",
+      "store_name": "string",
+      "city": "string",
+      "state": "string",
+      "is_active": "boolean",
+      "created_at": "string",
+      "updated_at": "string"
+    }
+  },
+
+  "products": {
+    "primary_key": ["product_id"],
+    "columns": {
+      "product_id": "integer",
+      "sku": "string",
+      "product_name": "string",
+      "category": "string",
+      "unit_price": "string",
+      "is_active": "boolean",
+      "created_at": "string",
+      "updated_at": "string"
+    }
+  },
+
+  "promotions": {
+    "primary_key": ["promotion_id"],
+    "columns": {
+      "promotion_id": "integer",
+      "promotion_name": "string",
+      "discount_percentage": "string",
+      "start_date": "string",
+      "end_date": "string",
+      "created_at": "string"
+    }
+  },
+
+  "orders": {
+    "primary_key": ["order_id"],
+    "columns": {
+      "order_id": "long",
+      "store_id": "integer",
+      "order_status": "string",
+      "order_date": "string",
+      "total_amount": "string",
+      "created_at": "string",
+      "updated_at": "string"
+    }
+  },
+
+  "order_items": {
+    "primary_key": ["order_item_id"],
+    "columns": {
+      "order_item_id": "long",
+      "order_id": "long",
+      "product_id": "integer",
+      "quantity": "integer",
+      "unit_price": "string",
+      "discount_amount": "string",
+      "created_at": "string"
+    }
+  },
+
+  "inventory": {
+    "primary_key": ["store_id", "product_id"],
+    "columns": {
+      "store_id": "integer",
+      "product_id": "integer",
+      "stock_quantity": "integer",
+      "safety_stock": "integer",
+      "updated_at": "string"
+    }
+  },
+
+  "inventory_movements": {
+    "primary_key": ["movement_id"],
+    "columns": {
+      "movement_id": "long",
+      "store_id": "integer",
+      "product_id": "integer",
+      "movement_type": "string",
+      "quantity": "integer",
+      "reason": "string",
+      "movement_date": "string",
+      "created_at": "string"
+    }
+  },
+
+  "demand_forecasts": {
+    "primary_key": ["forecast_id"],
+    "columns": {
+      "forecast_id": "long",
+      "store_id": "integer",
+      "product_id": "integer",
+      "forecast_date": "string",
+      "forecast_quantity": "string",
+      "model_version": "string",
+      "created_at": "string"
+    }
+  }
+}
