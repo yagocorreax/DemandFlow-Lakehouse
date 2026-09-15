@@ -72,6 +72,6 @@ A aplicação representará uma empresa fictícia com dados de:
 - [x] Camada Raw imutável
 - [x] Bronze Events e Bronze Current
 - [x] Silver + Data Quality + Quarantine
-- [ ] Camada Gold
+- [x] Camada Gold
 
 **Em desenvolvimento**
