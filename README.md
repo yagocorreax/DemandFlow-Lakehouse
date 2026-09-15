@@ -65,13 +65,13 @@ A aplicação representará uma empresa fictícia com dados de:
 
 - [x] PostgreSQL transacional
 - [x] Gerador de dados
-- [x] LocalStack com S3 local
+- [x] LocalStack com S3 local persistente
 - [x] Spark + Delta Lake integrado ao S3 local
 - [x] Hive Metastore e Trino
-- [x] CDC real com Kafka e Debezium
+- [x] CDC com Kafka e Debezium
 - [x] Camada Raw imutável
 - [x] Bronze Events e Bronze Current
-- [ ] Camada Silver e Data Quality
+- [x] Silver + Data Quality + Quarantine
 - [ ] Camada Gold
 
 **Em desenvolvimento**
