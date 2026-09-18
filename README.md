@@ -57,7 +57,7 @@ A aplicação representará uma empresa fictícia com dados de:
 - estoque;
 - lojas;
 - promoções;
-- previsões de demanda.
+- previsões de demanda.clear
 
 ## Status
 
