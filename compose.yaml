@@ -281,8 +281,36 @@ services:
     mem_limit: 1200m
     cpus: "1.0"
 
+  superset:
+    build:
+      context: .
+      dockerfile: infra/superset/Dockerfile
+    container_name: demandflow-superset
+    restart: unless-stopped
+    profiles:
+      - bi
+    environment:
+      SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY}
+      SUPERSET_HOME: /app/superset_home
+      SUPERSET_CONFIG_PATH: /app/pythonpath/superset_config.py
+    ports:
+      - "8088:8088"
+    volumes:
+      - demandflow_superset_home:/app/superset_home
+      - ./infra/superset/superset_config.py:/app/pythonpath/superset_config.py:ro
+    command:
+      - superset
+      - run
+      - -h
+      - 0.0.0.0
+      - -p
+      - "8088"
+      - --with-threads
+    mem_limit: 1g
+
 volumes:
   demandflow_postgres_data:
   demandflow_hive_metastore_data:
   demandflow_kafka_data:
   demandflow_localstack_data:
+  demandflow_superset_home:
