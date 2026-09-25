@@ -6,4 +6,4 @@ RUN uv pip install \
     --python /app/.venv/bin/python \
     trino
 
-USER superset
+USER supersetar
