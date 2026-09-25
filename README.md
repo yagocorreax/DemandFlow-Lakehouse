@@ -61,6 +61,8 @@ A aplicação representará uma empresa fictícia com dados de:
 
 ## Status
 
+## Status
+
 - [x] PostgreSQL transacional
 - [x] Gerador de dados
 - [x] LocalStack com S3 persistente
@@ -70,8 +72,8 @@ A aplicação representará uma empresa fictícia com dados de:
 - [x] Bronze Events e Bronze Current
 - [x] Silver + Data Quality + Quarantine
 - [x] Gold Analytics
-- [x] Hive Metastore + Trino sobre a Gold
-- [ ] Dashboard analítico
-- [ ] Orquestração end-to-end
+- [x] Hive Metastore + Trino
+- [x] Dashboard analítico com Apache Superset
+- [ ] Orquestração end-to-end com Apache Airflow
 
 **Em desenvolvimento**
