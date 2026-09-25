@@ -61,8 +61,6 @@ A aplicação representará uma empresa fictícia com dados de:
 
 ## Status
 
-## Status
-
 - [x] PostgreSQL transacional
 - [x] Gerador de dados
 - [x] LocalStack com S3 persistente
