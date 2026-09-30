@@ -1,3 +1,34 @@
+x-airflow-common: &airflow-common
+  build:
+    context: .
+    dockerfile: infra/airflow/Dockerfile
+
+  environment: &airflow-common-env
+    AIRFLOW__CORE__EXECUTOR: CeleryExecutor
+
+    AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
+
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_DB_USER}:${AIRFLOW_DB_PASSWORD}@airflow-db:5432/${AIRFLOW_DB_NAME}
+
+    AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://${AIRFLOW_DB_USER}:${AIRFLOW_DB_PASSWORD}@airflow-db:5432/${AIRFLOW_DB_NAME}
+
+    AIRFLOW__CELERY__BROKER_URL: redis://airflow-redis:6379/0
+
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
+
+  volumes:
+    - ./airflow/dags:/opt/airflow/dags
+    - ./airflow/logs:/opt/airflow/logs
+    - ./airflow/plugins:/opt/airflow/plugins
+
+  depends_on:
+    airflow-db:
+      condition: service_healthy
+
+    airflow-redis:
+      condition: service_healthy
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -308,9 +339,151 @@ services:
       - --with-threads
     mem_limit: 1g
 
+  airflow-db:
+    image: postgres:16-alpine
+    container_name: demandflow-airflow-db
+    restart: unless-stopped
+
+    profiles:
+      - orchestration
+
+    environment:
+      POSTGRES_USER: ${AIRFLOW_DB_USER}
+      POSTGRES_PASSWORD: ${AIRFLOW_DB_PASSWORD}
+      POSTGRES_DB: ${AIRFLOW_DB_NAME}
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${AIRFLOW_DB_USER} -d ${AIRFLOW_DB_NAME}"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+    volumes:
+      - demandflow_airflow_db_data:/var/lib/postgresql/data
+
+
+  airflow-redis:
+    image: redis:7-alpine
+    container_name: demandflow-airflow-redis
+    restart: unless-stopped
+
+    profiles:
+      - orchestration
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "redis-cli",
+          "ping"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+
+  airflow-init:
+    <<: *airflow-common
+
+    container_name: demandflow-airflow-init
+
+    profiles:
+      - orchestration
+
+    entrypoint: /bin/bash
+
+    command:
+      - -c
+      - |
+        airflow db migrate
+
+        airflow users create \
+          --username "${AIRFLOW_ADMIN_USERNAME}" \
+          --password "${AIRFLOW_ADMIN_PASSWORD}" \
+          --firstname DemandFlow \
+          --lastname Admin \
+          --role Admin \
+          --email "${AIRFLOW_ADMIN_EMAIL}" \
+        || true
+
+    environment:
+      <<: *airflow-common-env
+
+      AIRFLOW_ADMIN_USERNAME: ${AIRFLOW_ADMIN_USERNAME}
+      AIRFLOW_ADMIN_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD}
+      AIRFLOW_ADMIN_EMAIL: ${AIRFLOW_ADMIN_EMAIL}
+
+
+  airflow-api-server:
+    <<: *airflow-common
+
+    container_name: demandflow-airflow-api-server
+    restart: unless-stopped
+
+    profiles:
+      - orchestration
+
+    command: api-server
+
+    ports:
+      - "8081:8080"
+
+
+  airflow-scheduler:
+    <<: *airflow-common
+
+    container_name: demandflow-airflow-scheduler
+    restart: unless-stopped
+
+    profiles:
+      - orchestration
+
+    command: scheduler
+
+
+  airflow-dag-processor:
+    <<: *airflow-common
+
+    container_name: demandflow-airflow-dag-processor
+    restart: unless-stopped
+
+    profiles:
+      - orchestration
+
+    command: dag-processor
+
+
+  airflow-triggerer:
+    <<: *airflow-common
+
+    container_name: demandflow-airflow-triggerer
+    restart: unless-stopped
+
+    profiles:
+      - orchestration
+
+    command: triggerer
+
+
+  airflow-worker:
+    <<: *airflow-common
+
+    container_name: demandflow-airflow-worker
+    restart: unless-stopped
+
+    profiles:
+      - orchestration
+
+    command: celery worker
+
 volumes:
   demandflow_postgres_data:
   demandflow_hive_metastore_data:
   demandflow_kafka_data:
   demandflow_localstack_data:
   demandflow_superset_home:
+  demandflow_airflow_db_data:
