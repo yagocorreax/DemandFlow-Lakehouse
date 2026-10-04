@@ -109,7 +109,7 @@ try {
         docker exec demandflow-trino `
             trino `
             --execute `
-            "CALL delta.system.register_table(schema_name => 'bronze', table_name => 'products_smoke', table_location => 's3://demandflow-dev-bronze/smoke/products_delta');"
+            "CALL delta.system.register_table(schema_name => 'bronze', table_name => 'products_smoke', table_location => 's3://demandflow-bronze/smoke/products_delta');"
 
         if ($LASTEXITCODE -ne 0) {
             throw "Falha ao registrar a tabela Delta."
