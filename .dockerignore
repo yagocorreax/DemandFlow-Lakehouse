@@ -1,0 +1,23 @@
+# Version control and local agent metadata
+.git/
+.agents/
+.codex/
+.aws/
+
+# Local secrets and environment files
+.env*
+**/.env*
+
+# Local Python environments and caches
+.venv/
+**/__pycache__/
+**/*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Runtime logs and local artifacts
+airflow/logs/
+**/*.log
+.DS_Store
+Thumbs.db
