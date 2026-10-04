@@ -22,6 +22,26 @@ x-airflow-common: &airflow-common
 
     AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_JWT_SECRET}
 
+    LOCALSTACK_INTERNAL_ENDPOINT: ${LOCALSTACK_INTERNAL_ENDPOINT}
+
+    AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+    AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+    AWS_REGION: ${AWS_REGION}
+    AWS_DEFAULT_REGION: ${AWS_REGION}
+
+    KAFKA_INTERNAL_BOOTSTRAP_SERVERS: ${KAFKA_INTERNAL_BOOTSTRAP_SERVERS}
+    KAFKA_TOPIC_PATTERN: ${KAFKA_TOPIC_PATTERN}
+
+    RAW_S3_PATH: ${RAW_S3_PATH}
+    RAW_CHECKPOINT_PATH: ${RAW_CHECKPOINT_PATH}
+
+    BRONZE_S3_PATH: ${BRONZE_S3_PATH}
+
+    SILVER_S3_PATH: ${SILVER_S3_PATH}
+    QUARANTINE_S3_PATH: ${QUARANTINE_S3_PATH}
+
+    GOLD_S3_PATH: ${GOLD_S3_PATH}
+
   volumes:
     - ./airflow/dags:/opt/airflow/dags
     - ./airflow/logs:/opt/airflow/logs
@@ -46,7 +66,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
 
     ports:
-      - "${POSTGRES_PORT}:5432"
+      - "127.0.0.1:${POSTGRES_PORT}:5432"
 
     command:
       - postgres
@@ -72,7 +92,7 @@ services:
       retries: 10
 
   localstack:
-    image: localstack/localstack:latest
+    image: localstack/localstack-pro:2026.7.1
     container_name: demandflow-localstack
     restart: unless-stopped
 
@@ -81,9 +101,10 @@ services:
       AWS_DEFAULT_REGION: ${AWS_REGION}
       DEBUG: "0"
       PERSISTENCE: "1"
+      SNAPSHOT_SAVE_STRATEGY: "SCHEDULED"
 
     ports:
-      - "4566:4566"
+      - "127.0.0.1:4566:4566"
 
     volumes:
       - demandflow_localstack_data:/var/lib/localstack
@@ -175,7 +196,7 @@ services:
       - localstack
 
     ports:
-      - "9083:9083"
+      - "127.0.0.1:9083:9083"
 
     volumes:
       - demandflow_hive_metastore_data:/opt/hive/data
@@ -204,7 +225,7 @@ services:
         condition: service_completed_successfully
 
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
 
     volumes:
       - ./infra/trino/catalog:/etc/trino/catalog:ro
@@ -222,7 +243,7 @@ services:
       - cdc
 
     ports:
-      - "9092:9092"
+      - "127.0.0.1:9092:9092"
 
     environment:
       CLUSTER_ID: "4L6g3nShT-eMCtK--X86sw"
@@ -312,7 +333,7 @@ services:
         condition: service_healthy
 
     ports:
-      - "8083:8083"
+      - "127.0.0.1:8083:8083"
 
     mem_limit: 1200m
     cpus: "1.0"
@@ -330,7 +351,7 @@ services:
       SUPERSET_HOME: /app/superset_home
       SUPERSET_CONFIG_PATH: /app/pythonpath/superset_config.py
     ports:
-      - "8088:8088"
+      - "127.0.0.1:8088:8088"
     volumes:
       - demandflow_superset_home:/app/superset_home
       - ./infra/superset/superset_config.py:/app/pythonpath/superset_config.py:ro
@@ -436,7 +457,7 @@ services:
     command: api-server
 
     ports:
-      - "8081:8080"
+      - "127.0.0.1:8081:8080"
 
 
   airflow-scheduler:
