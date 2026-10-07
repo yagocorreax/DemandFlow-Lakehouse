@@ -9,7 +9,7 @@ Construir um pipeline completo de dados utilizando ferramentas gratuitas rodando
 O projeto simulará:
 
 - **Databricks:** Apache Spark, Delta Lake, arquitetura Medalhão, workflows e processamento incremental;
-- **AWS:** S3, IAM, Secrets Manager e outros serviços por meio do LocalStack.
+- **Armazenamento S3:** MinIO AIStor Free em nó único, com volume local persistente e identidade própria para o pipeline. Não emula os demais serviços AWS.
 
 ## Arquitetura
 
@@ -22,7 +22,7 @@ Apache Kafka
     ↓
 Apache Spark
     ↓
-LocalStack S3
+MinIO AIStor (S3)
     ↓
 Raw → Bronze → Silver → Gold
     ↓
@@ -36,7 +36,7 @@ Apache Superset
 - Python
 - PostgreSQL
 - Docker
-- LocalStack (AWS enviroment)
+- MinIO AIStor Free (armazenamento compatível com S3)
 - Apache Kafka
 - Debezium
 - Apache Spark
@@ -63,7 +63,8 @@ A aplicação representará uma empresa fictícia com dados de:
 
 - [x] PostgreSQL transacional
 - [x] Gerador de dados
-- [x] LocalStack com S3 persistente
+- [x] Configuração estática do AIStor com volume persistente
+- [ ] Validação de licença, autenticação e persistência do AIStor após reinício
 - [x] Spark + Delta Lake
 - [x] CDC com Kafka e Debezium
 - [x] Camada Raw imutável
@@ -75,3 +76,15 @@ A aplicação representará uma empresa fictícia com dados de:
 - [ ] Orquestração end-to-end com Apache Airflow
 
 **Em desenvolvimento**
+
+## Armazenamento local
+
+Consulte [a migração para AIStor](docs/aistor-migration.md) para a configuração
+de licença e credenciais externas, os seis buckets, as validações por blocos
+e os limites desta etapa. Os scripts antigos de bootstrap do LocalStack foram
+substituídos por `scripts/bootstrap-s3.ps1`.
+
+O Compose precisa de `DEMANDFLOW_SECRETS_DIR` no `.env`, apontando para um
+diretório fora do projeto e do OneDrive. Nenhum `.env.example` é necessário.
+As credenciais S3 vêm de `s3.env` nesse diretório; os valores AWS antigos
+do `.env` do projeto não são usados pelos serviços de armazenamento.
