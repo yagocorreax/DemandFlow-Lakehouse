@@ -1,7 +1,12 @@
+x-s3-env-files: &s3-env-files
+  - ${DEMANDFLOW_SECRETS_DIR:?Configure DEMANDFLOW_SECRETS_DIR in .env}/s3.env
+
 x-airflow-common: &airflow-common
   build:
     context: .
     dockerfile: infra/airflow/Dockerfile
+
+  env_file: *s3-env-files
 
   environment: &airflow-common-env
     AIRFLOW__CORE__EXECUTOR: CeleryExecutor
@@ -22,10 +27,8 @@ x-airflow-common: &airflow-common
 
     AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_JWT_SECRET}
 
-    LOCALSTACK_INTERNAL_ENDPOINT: ${LOCALSTACK_INTERNAL_ENDPOINT}
-
-    AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
-    AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+    S3_INTERNAL_ENDPOINT: ${S3_INTERNAL_ENDPOINT:-http://minio:9000}
+    S3_HEALTH_URL: http://minio:9000/minio/health/ready
     AWS_REGION: ${AWS_REGION}
     AWS_DEFAULT_REGION: ${AWS_REGION}
 
@@ -91,36 +94,61 @@ services:
       timeout: 5s
       retries: 10
 
-  localstack:
-    image: localstack/localstack-pro:2026.7.1
-    container_name: demandflow-localstack
+  minio:
+    image: quay.io/minio/aistor/minio:RELEASE.2026-09-19T17-05-25Z
+    container_name: demandflow-minio
     restart: unless-stopped
 
     environment:
-      LOCALSTACK_AUTH_TOKEN: ${LOCALSTACK_AUTH_TOKEN}
-      AWS_DEFAULT_REGION: ${AWS_REGION}
-      DEBUG: "0"
-      PERSISTENCE: "1"
-      SNAPSHOT_SAVE_STRATEGY: "SCHEDULED"
+      MINIO_ROOT_USER_FILE: /run/secrets/minio_root_user
+      MINIO_ROOT_PASSWORD_FILE: /run/secrets/minio_root_password
+      MINIO_SITE_REGION: ${AWS_REGION:-us-east-1}
+
+    command: ["minio", "server", "/mnt/data", "--console-address", ":9001", "--license", "/run/secrets/minio_license"]
+
+    secrets:
+      - minio_license
+      - minio_root_user
+      - minio_root_password
+      - s3_credentials
 
     ports:
-      - "127.0.0.1:4566:4566"
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
 
     volumes:
-      - demandflow_localstack_data:/var/lib/localstack
+      - demandflow_minio_data:/mnt/data
+      - ./infra/minio/bootstrap.sh:/opt/demandflow/bootstrap.sh:ro
+      - ./infra/minio/lakehouse-policy.json:/opt/demandflow/lakehouse-policy.json:ro
+
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+    # Initial budget for local validation; measure before increasing concurrency.
+    mem_limit: 1g
+    cpus: "1.0"
+    stop_grace_period: 30s
+
   spark:
-    image: apache/spark:3.5.9-scala2.12-java17-python3-r-ubuntu
+    build:
+      context: .
+      dockerfile: infra/spark/Dockerfile
+    image: demandflow-spark:3.5.9
 
     profiles:
       - processing
 
     working_dir: /opt/demandflow
 
+    env_file: *s3-env-files
+
     environment:
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
       AWS_DEFAULT_REGION: ${AWS_REGION}
-      LOCALSTACK_INTERNAL_ENDPOINT: ${LOCALSTACK_INTERNAL_ENDPOINT}
+      S3_INTERNAL_ENDPOINT: ${S3_INTERNAL_ENDPOINT:-http://minio:9000}
 
       KAFKA_INTERNAL_BOOTSTRAP_SERVERS: ${KAFKA_INTERNAL_BOOTSTRAP_SERVERS}
       KAFKA_TOPIC_PATTERN: ${KAFKA_TOPIC_PATTERN}
@@ -138,7 +166,8 @@ services:
       PYSPARK_PYTHON: python3
 
     depends_on:
-      - localstack
+      minio:
+        condition: service_healthy
 
     volumes:
       - ./src:/opt/demandflow/src:ro
@@ -180,12 +209,13 @@ services:
     profiles:
       - query
 
+    env_file: *s3-env-files
+
     environment:
       SERVICE_NAME: metastore
       DB_DRIVER: derby
-      AWS_ACCESS_KEY_ID: test
-      AWS_SECRET_ACCESS_KEY: test
-      AWS_DEFAULT_REGION: us-east-1
+      AWS_DEFAULT_REGION: ${AWS_REGION:-us-east-1}
+      S3_INTERNAL_ENDPOINT: ${S3_INTERNAL_ENDPOINT:-http://minio:9000}
       HADOOP_CONF_DIR: /opt/hadoop/etc/hadoop
 
       SERVICE_OPTS: >-
@@ -193,7 +223,10 @@ services:
         -Djavax.jdo.option.ConnectionDriverName=org.apache.derby.jdbc.EmbeddedDriver
 
     depends_on:
-      - localstack
+      minio:
+        condition: service_healthy
+      hive-metastore-init:
+        condition: service_completed_successfully
 
     ports:
       - "127.0.0.1:9083:9083"
@@ -213,16 +246,21 @@ services:
     profiles:
       - query
 
+    env_file: *s3-env-files
+
     environment:
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      S3_INTERNAL_ENDPOINT: ${S3_INTERNAL_ENDPOINT:-http://minio:9000}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
 
     depends_on:
-      localstack:
-        condition: service_started
+      minio:
+        condition: service_healthy
 
       hive-metastore-init:
         condition: service_completed_successfully
+
+      hive-metastore:
+        condition: service_started
 
     ports:
       - "127.0.0.1:8080:8080"
@@ -517,6 +555,18 @@ volumes:
   demandflow_postgres_data:
   demandflow_hive_metastore_data:
   demandflow_kafka_data:
+  demandflow_minio_data:
+  # Legacy volume retained for rollback; no service writes to it.
   demandflow_localstack_data:
   demandflow_superset_home:
   demandflow_airflow_db_data:
+
+secrets:
+  minio_license:
+    file: ${DEMANDFLOW_SECRETS_DIR}/minio.license
+  minio_root_user:
+    file: ${DEMANDFLOW_SECRETS_DIR}/minio-root-user
+  minio_root_password:
+    file: ${DEMANDFLOW_SECRETS_DIR}/minio-root-password
+  s3_credentials:
+    file: ${DEMANDFLOW_SECRETS_DIR}/s3.env
