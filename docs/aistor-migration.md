@@ -162,10 +162,23 @@ cada consumidor continua separada para não sobrecarregar a infraestrutura.
 - a imagem final continua executando como usuário não privilegiado `spark`;
 - nenhuma aplicação ou contêiner foi iniciado durante a reconstrução.
 
-A revisão identificou uma senha literal no JSON do conector Debezium. O valor
-não foi exibido. O estreitamento da imagem impede que esse arquivo seja copiado
-ou montado no Spark, mas não corrige o arquivo de origem nem o fluxo de registro
-do conector. Essa remediação exige um bloco separado antes do próximo teste CDC.
+### Endurecimento estático do registro Debezium em 07/10/2026
+
+- a senha literal foi removida do JSON versionado sem ser exibida;
+- o template contém um marcador inválido até o momento da injeção, impedindo o
+  registro acidental do conector sem uma credencial fornecida em runtime;
+- o script exige `DEBEZIUM_POSTGRES_PASSWORD`, credencial dedicada ao CDC, e
+  não reutiliza a senha administrativa `POSTGRES_PASSWORD`;
+- usuário, senha e banco são lidos do `.env` ignorado pelo Git, validados contra
+  ausência, duplicidade e valor vazio e inseridos somente no objeto em memória;
+- uma regressão verifica o marcador, a ordem da injeção, a separação da senha
+  administrativa e a ausência de impressão direta da credencial;
+- nenhum contêiner foi iniciado para esta correção estática.
+
+Essa correção elimina o segredo do estado atual da árvore, mas não o apaga do
+histórico do Git. A credencial anterior deve ser tratada como exposta até ser
+rotacionada no PostgreSQL e no `.env`. Reescrever o histórico não substitui a
+rotação e não faz parte deste bloco.
 
 O Docker Scout está instalado, mas recusou a análise sem login no Docker ID.
 Trivy, Grype e OSV Scanner não estão instalados. Portanto, a ausência de um
@@ -244,8 +257,8 @@ git diff --check
 
 Resultado atual:
 
-- nove testes de consistência passaram, incluindo isolamento da imagem Spark e
-  preservação dos componentes Generator/CDC;
+- dez testes de consistência passaram, incluindo isolamento da imagem Spark,
+  preservação dos componentes Generator/CDC e injeção segura da senha Debezium;
 - 19 scripts PowerShell passaram pelo parser sem execução operacional;
 - scripts shell passaram em `sh -n`;
 - Compose completo e `git diff --check` passaram;
@@ -275,8 +288,8 @@ mas não são consumidas pela configuração atual.
 
 Cada bloco exige nova autorização e termina com os serviços parados:
 
-1. remover e rotacionar a senha literal do registro Debezium antes de qualquer
-   teste CDC;
+1. rotacionar de forma coordenada a credencial dedicada do Debezium no
+   PostgreSQL e no `.env`, validando o login com somente o banco iniciado;
 2. avaliar um cache Ivy persistente e isolado para os jobs Spark;
 3. validar PostgreSQL, Kafka e Debezium em blocos pequenos;
 4. validar Hive Metastore e Trino;
