@@ -25,16 +25,8 @@ SPARK_PACKAGES = ",".join(
 
 
 SPARK_ENV = {
-    "LOCALSTACK_INTERNAL_ENDPOINT": os.environ[
-        "LOCALSTACK_INTERNAL_ENDPOINT"
-    ],
-
-    "AWS_ACCESS_KEY_ID": os.environ[
-        "AWS_ACCESS_KEY_ID"
-    ],
-
-    "AWS_SECRET_ACCESS_KEY": os.environ[
-        "AWS_SECRET_ACCESS_KEY"
+    "S3_INTERNAL_ENDPOINT": os.environ[
+        "S3_INTERNAL_ENDPOINT"
     ],
 
     "AWS_REGION": os.environ[
@@ -113,6 +105,10 @@ def spark_task(
         ],
 
         environment=SPARK_ENV,
+        private_environment={
+            "AWS_ACCESS_KEY_ID": os.environ["AWS_ACCESS_KEY_ID"],
+            "AWS_SECRET_ACCESS_KEY": os.environ["AWS_SECRET_ACCESS_KEY"],
+        },
 
         docker_url=DOCKER_URL,
 
@@ -176,8 +172,8 @@ with DAG(
             echo " DemandFlow Infrastructure Check"
             echo "===================================="
 
-            echo "Checking LocalStack..."
-            nc -z -w 5 localstack 4566
+            echo "Checking S3 storage..."
+            wget -q -T 5 -O /dev/null "$S3_HEALTH_URL"
 
             echo "Checking PostgreSQL..."
             nc -z -w 5 postgres 5432
@@ -202,6 +198,7 @@ with DAG(
         mount_tmp_dir=False,
 
         do_xcom_push=False,
+        environment={"S3_HEALTH_URL": os.environ["S3_HEALTH_URL"]},
     )
 
 
