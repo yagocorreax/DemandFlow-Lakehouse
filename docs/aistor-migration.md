@@ -172,6 +172,33 @@ Trivy, Grype e OSV Scanner não estão instalados. Portanto, a ausência de um
 inventário de CVEs continua sendo uma limitação conhecida; não deve ser
 interpretada como ausência de vulnerabilidades.
 
+### Smoke Spark + Delta em 07/10/2026
+
+O smoke foi executado com somente AIStor e um contêiner Spark temporário. A
+tabela `s3a://demandflow-bronze/smoke/products_delta` comprovou:
+
+- escrita Delta inicial na versão 0;
+- `MERGE`/UPSERT na versão 1;
+- leitura e validação dos quatro registros resultantes;
+- histórico das operações `WRITE` e `MERGE`;
+- Change Data Feed com pré-imagem, pós-imagem e inserção;
+- Time Travel para a versão anterior ao `MERGE`.
+
+O processo terminou com código 0. O contêiner Spark criado com `--rm` foi
+removido automaticamente e o AIStor foi parado. A tabela de smoke permanece no
+prefixo isolado `smoke/`, permitindo inspeção posterior e repetição idempotente
+por sobrescrita.
+
+No pico observado, Spark utilizou aproximadamente 1,92 GiB dos 3 GiB permitidos
+e saturou o limite de 2 CPUs; AIStor utilizou aproximadamente 447 MiB de 1 GiB e
+menos de 1% de CPU. Não ocorreu OOM nem sinal de sobrecarga fora dos limites.
+
+A primeira execução baixou seis artefatos Maven, cerca de 283 MB, para
+`/tmp/.ivy2` dentro do contêiner temporário. Esse cache é descartado por `--rm`,
+então execuções futuras repetem rede e escrita em disco. Persistir um cache Ivy
+dedicado pode reduzir tempo e tráfego, mas precisa de um bloco próprio para
+definir permissões, escopo e limpeza sem compartilhar credenciais.
+
 ## Operação isolada
 
 Preparar credenciais uma única vez:
@@ -243,6 +270,17 @@ partir do histórico do Git, recriar o contêiner antigo e validar os dados ante
 de qualquer escrita. Não montar o volume AIStor no LocalStack nem o volume
 LocalStack no AIStor. Variáveis antigas presentes no `.env` estão preservadas,
 mas não são consumidas pela configuração atual.
+
+## Próximos blocos
+
+Cada bloco exige nova autorização e termina com os serviços parados:
+
+1. remover e rotacionar a senha literal do registro Debezium antes de qualquer
+   teste CDC;
+2. avaliar um cache Ivy persistente e isolado para os jobs Spark;
+3. validar PostgreSQL, Kafka e Debezium em blocos pequenos;
+4. validar Hive Metastore e Trino;
+5. validar Airflow somente após suas dependências isoladas.
 
 ## Referências oficiais
 
