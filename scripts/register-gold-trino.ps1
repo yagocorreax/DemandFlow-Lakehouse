@@ -7,7 +7,7 @@ Push-Location $projectRoot
 try {
     Write-Host "Iniciando infraestrutura de consulta..."
 
-    docker compose up -d localstack
+    & "$PSScriptRoot\start-storage.ps1"
 
     docker compose `
         --profile query `
