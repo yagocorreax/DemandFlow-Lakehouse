@@ -5,6 +5,8 @@ $projectRoot = Split-Path -Parent $PSScriptRoot
 Push-Location $projectRoot
 
 try {
+    & "$PSScriptRoot\start-storage.ps1" -Bootstrap
+
     Write-Host "Preparando CDC..."
 
     & "$PSScriptRoot\configure-postgres-cdc.ps1"
@@ -17,44 +19,6 @@ try {
 
     if ($LASTEXITCODE -ne 0) {
         throw "Falha ao registrar o Debezium."
-    }
-
-    Write-Host ""
-    Write-Host "Iniciando LocalStack..."
-
-    docker compose up -d localstack
-
-    if ($LASTEXITCODE -ne 0) {
-        throw "Falha ao iniciar o LocalStack."
-    }
-
-    $localStackReady = $false
-
-    for ($attempt = 1; $attempt -le 30; $attempt++) {
-        try {
-            Invoke-RestMethod `
-                -Uri "http://localhost:4566/_localstack/health" `
-                -TimeoutSec 2 |
-                Out-Null
-
-            $localStackReady = $true
-            break
-        }
-        catch {
-            Start-Sleep -Seconds 2
-        }
-    }
-
-    if (-not $localStackReady) {
-        throw "LocalStack não ficou disponível."
-    }
-
-    Write-Host "Preparando buckets..."
-
-    & "$PSScriptRoot\bootstrap-localstack.ps1"
-
-    if ($LASTEXITCODE -ne 0) {
-        throw "Falha ao preparar os buckets."
     }
 
     Write-Host ""
