@@ -1,15 +1,5 @@
 # Migração do armazenamento para MinIO AIStor Free
 
-## Estado desta etapa
-
-Configuração e código adaptados para AIStor. A validação desta etapa é estática:
-nenhuma imagem foi baixada/construída e nenhum container foi iniciado.
-Licenciamento, consumo real, acesso autenticado, persistência após reinício
-e compatibilidade Spark/Delta/Hive/Trino ainda precisam de testes em execução.
-
-O AIStor substitui somente o armazenamento S3. Não substitui IAM, STS ou
-Secrets Manager da AWS. A política e os usuários abaixo são locais ao AIStor.
-
 ## Configuração
 
 | Item | Configuração |
