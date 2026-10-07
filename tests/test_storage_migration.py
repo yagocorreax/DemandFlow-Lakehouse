@@ -118,6 +118,39 @@ class StorageMigrationTest(unittest.TestCase):
         for service_name in ("postgres", "kafka", "debezium", "spark"):
             self.assertIn(service_name, self.services)
 
+    def test_debezium_password_is_injected_only_at_runtime(self):
+        connector = json.loads(read("config/debezium/postgres-connector.json"))
+        connector_config = connector["config"]
+        placeholder = "__DEMANDFLOW_RUNTIME_SECRET__"
+        self.assertEqual(connector_config["database.password"], placeholder)
+        self.assertEqual(connector_config["database.user"], "__FROM_ENV__")
+        self.assertEqual(connector_config["database.dbname"], "__FROM_ENV__")
+
+        script = read("scripts/register-debezium-connector.ps1")
+        self.assertIn(
+            '$cdcPassword = Get-DotEnvValue "DEBEZIUM_POSTGRES_PASSWORD"',
+            script,
+        )
+        self.assertNotIn('Get-DotEnvValue "POSTGRES_PASSWORD"', script)
+        self.assertIn(
+            "$payload.config.'database.password' = $cdcPassword",
+            script,
+        )
+        self.assertIn(placeholder, script)
+        self.assertNotRegex(
+            script,
+            r"(?i)Write-(?:Host|Output)[^\n]*cdcPassword",
+        )
+        self.assertLess(
+            script.index(placeholder),
+            script.index("$payload.config.'database.password' = $cdcPassword"),
+        )
+        self.assertLess(
+            script.index("$payload.config.'database.password' = $cdcPassword"),
+            script.index("ConvertTo-Json -Depth 20"),
+        )
+        self.assertIn(".env", read(".gitignore").splitlines())
+
     def test_consumers_share_external_pipeline_credentials(self):
         expected_file = self.config["secrets"]["s3_credentials"]["file"]
         consumers = ["spark", "hive-metastore", "trino"] + [
