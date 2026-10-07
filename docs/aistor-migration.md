@@ -1,0 +1,226 @@
+# Migração do armazenamento para MinIO AIStor Free
+
+## Resumo do estado
+
+| Item | Estado comprovado |
+| --- | --- |
+| Imagem | `quay.io/minio/aistor/minio:RELEASE.2026-09-19T17-05-25Z` |
+| Serviço / contêiner | `minio` / `demandflow-minio` |
+| Licença no log | `MinIO Community License`, sem erro de carregamento |
+| API / console no host | `http://127.0.0.1:9000` / `http://127.0.0.1:9001` |
+| Endpoint entre contêineres | `S3_INTERNAL_ENDPOINT=http://minio:9000` |
+| Persistência | volume `demandflow_minio_data` montado em `/mnt/data` |
+| Prontidão | `mc ready local` e HTTP `/minio/health/ready` |
+| Limite local | 1 CPU e 1 GiB de RAM |
+| Bootstrap | seis buckets, identidade separada e política restrita |
+| Reinício | buckets, identidade e política persistiram sem reprovisionamento |
+
+O nó único mantém dados entre reinícios, mas não fornece alta disponibilidade
+nem substitui backup. O tráfego permanece HTTP dentro da rede Docker local; as
+duas portas publicadas estão vinculadas somente ao loopback do host.
+
+## Licença e credenciais externas
+
+O `.env` local contém o caminho externo e o endpoint interno:
+
+```dotenv
+DEMANDFLOW_SECRETS_DIR=C:/Users/jcpre/.demandflow-secrets
+S3_INTERNAL_ENDPOINT=http://minio:9000
+```
+
+Arquivos esperados fora do projeto e fora do OneDrive:
+
+```text
+C:/Users/jcpre/.demandflow-secrets/
+  minio.license
+  minio-root-user
+  minio-root-password
+  s3.env
+```
+
+`scripts/initialize-storage-secrets.ps1` gera credenciais com aleatoriedade
+criptográfica, não mostra valores, não sobrescreve um conjunto existente e
+interrompe diante de arquivos parciais ou vazios. A licença é preservada.
+
+Na validação, o diretório externo estava acessível somente à conta local,
+`SYSTEM` e administradores. Ainda assim, secrets baseados em arquivos no
+Compose são montagens de leitura, não um cofre criptografado. Um administrador
+do host ou do Docker continua capaz de inspecionar processos e ambientes.
+
+O AIStor recebe o administrador por `MINIO_ROOT_USER_FILE` e
+`MINIO_ROOT_PASSWORD_FILE`. Spark, Hive, Trino e Airflow recebem somente a
+identidade de aplicação de `s3.env`; eles não recebem a licença nem as
+credenciais administrativas.
+
+Não execute `docker compose config` de forma verbosa em logs compartilhados.
+Depois da criação de `s3.env`, prefira `docker compose config --quiet`, pois a
+renderização completa pode incluir variáveis originadas de `env_file`.
+
+## Buckets e política de menor privilégio
+
+Os nomes utilizados por `s3://` e `s3a://` são exatamente:
+
+- `demandflow-raw`
+- `demandflow-bronze`
+- `demandflow-silver`
+- `demandflow-gold`
+- `demandflow-quarantine`
+- `demandflow-checkpoints`
+
+Não existe o marcador `dev` nos nomes.
+
+`scripts/bootstrap-s3.ps1` executa `infra/minio/bootstrap.sh` dentro do próprio
+AIStor. O bootstrap é idempotente e:
+
+1. valida os arquivos de credenciais sem imprimi-los;
+2. cria os seis buckets;
+3. cria uma identidade exclusiva para o pipeline;
+4. aplica `infra/minio/lakehouse-policy.json`;
+5. confirma o acesso da identidade a todos os buckets.
+
+A política permite obter região, listar bucket, ler, gravar e excluir objetos e
+executar as operações multipart necessárias ao S3A. Ela não permite administrar
+usuários, criar ou excluir buckets, acessar buckets diferentes ou habilitar
+acesso anônimo.
+
+### Correção de compatibilidade do bootstrap
+
+A primeira execução de runtime parou antes de criar buckets porque a imagem
+minimalista do AIStor não contém `sed`. O parser foi substituído por
+`read`/`case` do shell POSIX, sem instalar pacotes ou criar outra imagem.
+
+O parser atual rejeita campos desconhecidos, duplicados, ausentes e valores
+fora do formato gerado. Ele não executa `s3.env` como código. Um teste de
+regressão impede o retorno do parser externo ou do carregamento inseguro do
+arquivo.
+
+## Evidências dos testes de runtime
+
+Os testes foram feitos com somente o AIStor em execução:
+
+- contêiner alcançou `running/healthy`;
+- API e console responderam HTTP `200`;
+- portas `9000` e `9001` ficaram em `127.0.0.1`;
+- arquivo de licença foi montado com o tamanho esperado;
+- log identificou `MinIO Community License` sem erro;
+- foram encontrados exatamente os seis buckets documentados;
+- a identidade do pipeline gravou, leu e excluiu um objeto pequeno;
+- administração e criação de bucket foram negadas à identidade do pipeline;
+- o objeto e os scripts temporários de teste foram excluídos;
+- após parar e iniciar o mesmo contêiner, tudo foi revalidado sem executar o
+  bootstrap: identidade, política e seis buckets persistiram;
+- ao final, o AIStor foi parado normalmente e nenhum contêiner ficou ativo.
+
+Os testes comprovam o caminho local exercitado. Eles não equivalem a teste de
+carga, backup, recuperação de desastre ou alta disponibilidade.
+
+## Recursos e desempenho local
+
+O limite permanece em **1 CPU e 1 GiB** para proteger a máquina local. Na
+amostra após a inicialização, o AIStor utilizou aproximadamente 79 MiB e 0,39%
+de CPU, sem pressão de memória.
+
+O AIStor alertou que recomenda oito CPUs para comportamento ideal; o contêiner
+estava com `GOMAXPROCS=1`. Isso é um trade-off consciente de desenvolvimento:
+mais CPU pode aumentar throughput e paralelismo, mas iniciar vários serviços já
+causou sobrecarga nesta máquina.
+
+Não há evidência que justifique elevar memória agora. Se Spark demonstrar
+gargalo de armazenamento, testar primeiro 2 CPUs somente com AIStor e Spark,
+comparar tempo/CPU/memória e voltar ao limite anterior se o host degradar. Não
+subir diretamente para oito CPUs nem iniciar a stack inteira para esse teste.
+
+## Integrações configuradas
+
+- Os nove jobs e validadores Spark usam `S3_INTERNAL_ENDPOINT`; o smoke test não
+  possui fallback para credenciais de teste.
+- A imagem Spark é `demandflow-spark:3.5.9`, construída por
+  `infra/spark/Dockerfile`.
+- Hive usa endpoint e região do ambiente e
+  `EnvironmentVariableCredentialsProvider`; não grava chaves em XML.
+- Trino recebe endpoint, região e credenciais pelo ambiente e depende do Hive.
+- Airflow encaminha as chaves ao operador por `private_environment` e verifica
+  a prontidão HTTP do armazenamento.
+- Os consumidores aguardam o healthcheck do AIStor quando aplicável.
+
+Essas integrações passaram por consistência estática. A validação funcional de
+cada consumidor continua separada para não sobrecarregar a infraestrutura.
+
+## Operação isolada
+
+Preparar credenciais uma única vez:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/initialize-storage-secrets.ps1
+```
+
+Iniciar apenas armazenamento e aguardar o healthcheck:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-storage.ps1
+```
+
+Executar bootstrap quando necessário:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/bootstrap-s3.ps1
+```
+
+Ou iniciar e executar o bootstrap no mesmo fluxo:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-storage.ps1 -Bootstrap
+```
+
+Parar somente o armazenamento, preservando contêiner e volume:
+
+```powershell
+docker compose stop -t 30 minio
+```
+
+Não usar `docker compose down -v`: isso excluiria volumes persistentes.
+
+## Validação estática
+
+```powershell
+docker compose --profile processing --profile query --profile orchestration config --quiet
+.venv\Scripts\python.exe -B -m unittest discover -s tests -p test_storage_migration.py -v
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/validate-static-syntax.ps1
+git diff --check
+```
+
+Resultado atual:
+
+- oito testes de consistência passaram;
+- 19 scripts PowerShell passaram pelo parser sem execução operacional;
+- scripts shell passaram em `sh -n`;
+- Compose completo e `git diff --check` passaram;
+- arquivos de licença e credenciais estão ignorados pelo Git e pelo contexto de
+  build.
+
+O Git pode emitir um aviso preexistente ao acessar
+`airflow/logs/dag_processor/latest`; esse link de logs não participa da migração.
+
+## Legado e rollback
+
+O serviço LocalStack não existe mais no Compose. O contêiner órfão
+`demandflow-localstack` foi removido em 06/10/2026 com autorização explícita,
+sem `-v`. O volume `demandflow_localstack_data` continua declarado e o volume
+Docker físico legado foi preservado para rollback.
+
+O volume do AIStor é separado. Formatos internos de LocalStack e AIStor não são
+intercambiáveis, e esta etapa não migrou objetos entre eles.
+
+Um rollback exige restaurar em conjunto Compose, scripts, jobs e catálogos a
+partir do histórico do Git, recriar o contêiner antigo e validar os dados antes
+de qualquer escrita. Não montar o volume AIStor no LocalStack nem o volume
+LocalStack no AIStor. Variáveis antigas presentes no `.env` estão preservadas,
+mas não são consumidas pela configuração atual.
+
+## Referências oficiais
+
+- [AIStor em contêiner e licença Free](https://docs.min.io/aistor/installation/container/install/)
+- [Configuração do servidor AIStor](https://docs.min.io/aistor/reference/aistor-server/settings/)
+- [Identidades locais e políticas](https://docs.min.io/aistor/administration/iam/identity/built-in-identity/)
+- [Expansão de ambiente no Hadoop](https://hadoop.apache.org/docs/r3.3.6/api/org/apache/hadoop/conf/Configuration.html)
+- [Validação do Docker Compose](https://docs.docker.com/reference/cli/docker/compose/config/)
