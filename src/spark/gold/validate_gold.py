@@ -56,7 +56,7 @@ def create_spark() -> SparkSession:
         .config(
             "spark.hadoop.fs.s3a.endpoint",
             required_env(
-                "LOCALSTACK_INTERNAL_ENDPOINT"
+                "S3_INTERNAL_ENDPOINT"
             ),
         )
         .config(
