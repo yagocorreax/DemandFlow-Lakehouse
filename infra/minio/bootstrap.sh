@@ -12,8 +12,42 @@ done
 
 root_user=$(cat /run/secrets/minio_root_user)
 root_password=$(cat /run/secrets/minio_root_password)
-app_user=$(sed -n 's/^AWS_ACCESS_KEY_ID=//p' /run/secrets/s3_credentials)
-app_password=$(sed -n 's/^AWS_SECRET_ACCESS_KEY=//p' /run/secrets/s3_credentials)
+app_user=
+app_password=
+seen_app_user=0
+seen_app_password=0
+
+# AIStor deliberately ships a minimal image. Parse the controlled two-line
+# env file with POSIX shell built-ins instead of depending on sed/awk/etc.
+while IFS='=' read -r key value; do
+    case "$key" in
+        AWS_ACCESS_KEY_ID)
+            test "$seen_app_user" -eq 0 || {
+                echo "Duplicate storage credential entry." >&2
+                exit 1
+            }
+            app_user=$value
+            seen_app_user=1
+            ;;
+        AWS_SECRET_ACCESS_KEY)
+            test "$seen_app_password" -eq 0 || {
+                echo "Duplicate storage credential entry." >&2
+                exit 1
+            }
+            app_password=$value
+            seen_app_password=1
+            ;;
+        *)
+            echo "Invalid storage credential entry." >&2
+            exit 1
+            ;;
+    esac
+done < /run/secrets/s3_credentials
+
+test "$seen_app_user" -eq 1 && test "$seen_app_password" -eq 1 || {
+    echo "Incomplete storage credential file." >&2
+    exit 1
+}
 
 # Provisioning generates alphanumeric values; reject malformed/duplicate entries.
 for value in "$root_user" "$root_password" "$app_user" "$app_password"; do
