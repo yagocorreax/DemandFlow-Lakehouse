@@ -1,10 +1,10 @@
 # DemandFlow Lakehouse
 
-Projeto de Engenharia de Dados criado para **simular localmente uma arquitetura Databricks + AWS**
+Projeto de Engenharia de Dados criado para **simular localmente uma arquitetura Databricks + AWS**.
 
 ## Objetivo
 
-Construir um pipeline completo de dados utilizando ferramentas gratuitas rodando na infraesstrutura do Docker.
+Construir um pipeline completo de dados utilizando ferramentas gratuitas rodando na infraestrutura do Docker.
 
 O projeto simulará:
 
@@ -57,14 +57,14 @@ A aplicação representará uma empresa fictícia com dados de:
 - estoque;
 - lojas;
 - promoções;
-- previsões de demanda.clear
+- previsões de demanda.
 
 ## Status
 
 - [x] PostgreSQL transacional
 - [x] Gerador de dados
 - [x] Configuração estática do AIStor com volume persistente
-- [ ] Validação de licença, autenticação e persistência do AIStor após reinício
+- [x] Licença, autenticação, menor privilégio e persistência do AIStor validados isoladamente
 - [x] Spark + Delta Lake
 - [x] CDC com Kafka e Debezium
 - [x] Camada Raw imutável
@@ -81,6 +81,7 @@ A aplicação representará uma empresa fictícia com dados de:
 
 Consulte [a migração para AIStor](docs/aistor-migration.md) para a configuração
 de licença e credenciais externas, os seis buckets, as validações por blocos
-e os limites desta etapa. Os scripts antigos de bootstrap do LocalStack foram
-substituídos por `scripts/bootstrap-s3.ps1`.
+e os limites desta etapa. após a etapa, identidade, política e buckets foram
+confirmados após reinício sem repetir o bootstrap. Os scripts antigos de
+bootstrap do LocalStack foram substituídos por `scripts/bootstrap-s3.ps1`.
 
