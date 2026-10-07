@@ -5,21 +5,7 @@ $projectRoot = Split-Path -Parent $PSScriptRoot
 Push-Location $projectRoot
 
 try {
-    Write-Host "Iniciando LocalStack..."
-
-    docker compose up -d localstack
-
-    if ($LASTEXITCODE -ne 0) {
-        throw "Falha ao iniciar LocalStack."
-    }
-
-    Write-Host "Preparando buckets..."
-
-    & "$PSScriptRoot\bootstrap-localstack.ps1"
-
-    if ($LASTEXITCODE -ne 0) {
-        throw "Falha ao preparar buckets."
-    }
+    & "$PSScriptRoot\start-storage.ps1" -Bootstrap
 
     Write-Host ""
     Write-Host "Executando Silver -> Gold..."
