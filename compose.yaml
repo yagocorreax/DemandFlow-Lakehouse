@@ -170,8 +170,8 @@ services:
         condition: service_healthy
 
     volumes:
-      - ./src:/opt/demandflow/src:ro
-      - ./config:/opt/demandflow/config:ro
+      - ./src/spark:/opt/demandflow/src/spark:ro
+      - ./config/tables.json:/opt/demandflow/config/tables.json:ro
 
     mem_limit: 3g
     cpus: "2.0"
