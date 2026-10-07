@@ -120,6 +120,9 @@ class StorageMigrationTest(unittest.TestCase):
         self.assertEqual(object_resources, {"arn:aws:s3:::" + b + "/*" for b in BUCKETS})
         bootstrap = read("infra/minio/bootstrap.sh")
         self.assertEqual(set(re.findall(r"demandflow-(?:raw|bronze|silver|gold|quarantine|checkpoints)\b", bootstrap)), BUCKETS)
+        self.assertIn("while IFS='=' read -r key value; do", bootstrap)
+        self.assertNotRegex(bootstrap, r"\$\(\s*(?:sed|awk|cut|grep)\b")
+        self.assertNotRegex(bootstrap, r"(?m)^\s*(?:\.|source)\s+/run/secrets/s3_credentials\b")
         self.assertNotIn("GetCallerIdentity", read("scripts/bootstrap-s3.ps1"))
         self.assertNotIn(b"\r", (ROOT / "infra/minio/bootstrap.sh").read_bytes())
 
