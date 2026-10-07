@@ -24,17 +24,11 @@ try {
         trino hive-metastore
 
     # --------------------------------------------------
-    # LOCALSTACK
+    # S3 STORAGE
     # --------------------------------------------------
 
     Write-Host ""
-    Write-Host "Iniciando LocalStack..."
-
-    docker compose up -d localstack
-
-    Start-Sleep -Seconds 10
-
-    & "$PSScriptRoot\bootstrap-localstack.ps1"
+    & "$PSScriptRoot\start-storage.ps1" -Bootstrap
 
     # --------------------------------------------------
     # RAW
