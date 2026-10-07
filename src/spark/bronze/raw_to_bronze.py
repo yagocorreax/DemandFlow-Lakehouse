@@ -43,7 +43,7 @@ def load_config() -> dict:
 
 def create_spark_session() -> SparkSession:
     endpoint = get_required_env(
-        "LOCALSTACK_INTERNAL_ENDPOINT"
+        "S3_INTERNAL_ENDPOINT"
     )
 
     return (
