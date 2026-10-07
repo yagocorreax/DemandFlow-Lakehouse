@@ -84,7 +84,3 @@ de licença e credenciais externas, os seis buckets, as validações por blocos
 e os limites desta etapa. Os scripts antigos de bootstrap do LocalStack foram
 substituídos por `scripts/bootstrap-s3.ps1`.
 
-O Compose precisa de `DEMANDFLOW_SECRETS_DIR` no `.env`, apontando para um
-diretório fora do projeto e do OneDrive. Nenhum `.env.example` é necessário.
-As credenciais S3 vêm de `s3.env` nesse diretório; os valores AWS antigos
-do `.env` do projeto não são usados pelos serviços de armazenamento.
