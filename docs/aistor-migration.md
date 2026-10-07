@@ -31,10 +31,10 @@ Conteúdo esperado do diretório externo:
 
 ```text
 .demandflow-secrets/
-  minio.license          # existente, não alterado por esta migração
-  minio-root-user        # gerado na preparação
-  minio-root-password    # gerado na preparação
-  s3.env                # credenciais exclusivas do pipeline
+  minio.license          
+  minio-root-user        
+  minio-root-password    
+  s3.env                
 ```
 
 `scripts/initialize-storage-secrets.ps1` prepara os três últimos arquivos
