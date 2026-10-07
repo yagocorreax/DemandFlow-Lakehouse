@@ -7,6 +7,11 @@
 # Local secrets and environment files
 .env*
 **/.env*
+**/*.license
+**/.demandflow-secrets/
+**/s3.env
+**/minio-root-user
+**/minio-root-password
 
 # Local Python environments and caches
 .venv/
