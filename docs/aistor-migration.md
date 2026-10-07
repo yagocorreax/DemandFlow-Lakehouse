@@ -14,10 +14,8 @@
 | Prontidão | `mc ready local`; HTTP `/minio/health/ready` |
 | Orçamento inicial | 1 GiB RAM, 1 CPU; medir e ajustar após o teste isolado |
 
-O limite de recursos é uma configuração inicial, não um benchmark nem uma
-garantia de capacidade. Em nó único, o volume conserva dados entre reinícios,
-mas não oferece alta disponibilidade nem substitui backup. A edição Free não
-inclui criptografia em repouso; o transporte aqui permanece HTTP na rede local
+Em nó único, o volume conserva dados entre reinícios,
+mas não oferece alta disponibilidade nem substitui backup. O transporte aqui permanece HTTP na rede local
 do Docker, com portas do host limitadas ao loopback.
 
 ## Licença e credenciais fora do projeto
