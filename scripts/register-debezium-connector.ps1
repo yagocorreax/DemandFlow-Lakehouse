@@ -1,4 +1,5 @@
 $ErrorActionPreference = "Stop"
+Set-StrictMode -Version Latest
 
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $envFile = Join-Path $projectRoot ".env"
@@ -13,17 +14,39 @@ function Get-DotEnvValue {
         [string]$Name
     )
 
-    $line = Get-Content $envFile |
+    if (-not (Test-Path -LiteralPath $envFile -PathType Leaf)) {
+        throw "Arquivo .env não encontrado."
+    }
+
+    $lines = @(
+        Get-Content -LiteralPath $envFile -Encoding UTF8 |
         Where-Object {
             $_ -match "^\s*$([regex]::Escape($Name))\s*="
         } |
-        Select-Object -Last 1
+        ForEach-Object { $_ }
+    )
 
-    if (-not $line) {
+    if ($lines.Count -eq 0) {
         throw "Variável $Name não encontrada no .env."
     }
+    if ($lines.Count -ne 1) {
+        throw "Variável $Name está duplicada no .env."
+    }
 
-    return (($line -split "=", 2)[1]).Trim().Trim('"').Trim("'")
+    $value = (($lines[0] -split "=", 2)[1]).Trim()
+    if ($value.Length -ge 2) {
+        $first = $value[0]
+        $last = $value[$value.Length - 1]
+        if (($first -eq '"' -and $last -eq '"') -or
+            ($first -eq "'" -and $last -eq "'")) {
+            $value = $value.Substring(1, $value.Length - 2)
+        }
+    }
+    if ([string]::IsNullOrWhiteSpace($value)) {
+        throw "Variável $Name está vazia no .env."
+    }
+
+    return $value
 }
 
 $connectUrl = Get-DotEnvValue "KAFKA_CONNECT_URL"
@@ -70,8 +93,22 @@ try {
 
     Write-Host "Kafka Connect disponível."
 
-    $payload = Get-Content $configFile -Raw |
+    if (-not (Test-Path -LiteralPath $configFile -PathType Leaf)) {
+        throw "Template do connector Debezium não encontrado."
+    }
+
+    $payload = Get-Content -LiteralPath $configFile -Raw -Encoding UTF8 |
         ConvertFrom-Json
+
+    if (
+        $payload.config.'database.password' -ne
+        "__DEMANDFLOW_RUNTIME_SECRET__"
+    ) {
+        throw (
+            "O template Debezium não pode conter senha literal. " +
+            "Use o marcador de injeção em runtime."
+        )
+    }
 
     $payload.config.'database.user' = $cdcUser
     $payload.config.'database.password' = $cdcPassword
