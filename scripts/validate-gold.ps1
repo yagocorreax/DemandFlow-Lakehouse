@@ -5,7 +5,7 @@ $projectRoot = Split-Path -Parent $PSScriptRoot
 Push-Location $projectRoot
 
 try {
-    docker compose up -d localstack
+    & "$PSScriptRoot\start-storage.ps1"
 
     Write-Host "Validando Gold..."
 
