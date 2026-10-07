@@ -135,7 +135,11 @@ subir diretamente para oito CPUs nem iniciar a stack inteira para esse teste.
 - Os nove jobs e validadores Spark usam `S3_INTERNAL_ENDPOINT`; o smoke test não
   possui fallback para credenciais de teste.
 - A imagem Spark é `demandflow-spark:3.5.9`, construída por
-  `infra/spark/Dockerfile`.
+  `infra/spark/Dockerfile` sobre a variante oficial Python sem R, fixada por
+  digest.
+- A imagem e os bind mounts do Spark incluem somente `src/spark` e
+  `config/tables.json`. Generator e Debezium permanecem no projeto e nos seus
+  próprios fluxos, mas não ficam acessíveis dentro do contêiner Spark.
 - Hive usa endpoint e região do ambiente e
   `EnvironmentVariableCredentialsProvider`; não grava chaves em XML.
 - Trino recebe endpoint, região e credenciais pelo ambiente e depende do Hive.
@@ -145,6 +149,28 @@ subir diretamente para oito CPUs nem iniciar a stack inteira para esse teste.
 
 Essas integrações passaram por consistência estática. A validação funcional de
 cada consumidor continua separada para não sobrecarregar a infraestrutura.
+
+### Endurecimento da imagem Spark em 07/10/2026
+
+- a base com R foi substituída por
+  `apache/spark:3.5.9-scala2.12-java17-python3-ubuntu` fixada pelo digest OCI
+  `sha256:f3d6eaa8bab8ec2e38f3c3918a5b2f8b253c95bcb19f9e87ad0e0cdacf9df2d5`;
+- o conteúdo comprimido caiu de aproximadamente 879,6 MB para 659,0 MB, redução
+  de cerca de 220,6 MB (25%);
+- o contexto enviado à build caiu de 81,86 KB para 935 bytes;
+- Java 17, diretório de trabalho e entrada do Spark foram preservados;
+- a imagem final continua executando como usuário não privilegiado `spark`;
+- nenhuma aplicação ou contêiner foi iniciado durante a reconstrução.
+
+A revisão identificou uma senha literal no JSON do conector Debezium. O valor
+não foi exibido. O estreitamento da imagem impede que esse arquivo seja copiado
+ou montado no Spark, mas não corrige o arquivo de origem nem o fluxo de registro
+do conector. Essa remediação exige um bloco separado antes do próximo teste CDC.
+
+O Docker Scout está instalado, mas recusou a análise sem login no Docker ID.
+Trivy, Grype e OSV Scanner não estão instalados. Portanto, a ausência de um
+inventário de CVEs continua sendo uma limitação conhecida; não deve ser
+interpretada como ausência de vulnerabilidades.
 
 ## Operação isolada
 
@@ -191,7 +217,8 @@ git diff --check
 
 Resultado atual:
 
-- oito testes de consistência passaram;
+- nove testes de consistência passaram, incluindo isolamento da imagem Spark e
+  preservação dos componentes Generator/CDC;
 - 19 scripts PowerShell passaram pelo parser sem execução operacional;
 - scripts shell passaram em `sh -n`;
 - Compose completo e `git diff --check` passaram;
