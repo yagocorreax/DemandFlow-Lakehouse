@@ -7,12 +7,12 @@
 
     <property>
         <name>fs.s3a.endpoint</name>
-        <value>http://localstack:4566</value>
+        <value>${env.S3_INTERNAL_ENDPOINT}</value>
     </property>
 
     <property>
         <name>fs.s3a.endpoint.region</name>
-        <value>us-east-1</value>
+        <value>${env.AWS_DEFAULT_REGION}</value>
     </property>
 
     <property>
@@ -26,17 +26,7 @@
     </property>
 
     <property>
-        <name>fs.s3a.access.key</name>
-        <value>test</value>
-    </property>
-
-    <property>
-        <name>fs.s3a.secret.key</name>
-        <value>test</value>
-    </property>
-
-    <property>
         <name>fs.s3a.aws.credentials.provider</name>
-        <value>org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider</value>
+        <value>com.amazonaws.auth.EnvironmentVariableCredentialsProvider</value>
     </property>
 </configuration>
