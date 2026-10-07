@@ -17,7 +17,7 @@ def get_required_env(name: str) -> str:
 
 def create_spark_session() -> SparkSession:
     endpoint = get_required_env(
-        "LOCALSTACK_INTERNAL_ENDPOINT"
+        "S3_INTERNAL_ENDPOINT"
     )
 
     access_key = get_required_env(
