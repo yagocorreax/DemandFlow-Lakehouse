@@ -67,6 +67,57 @@ class StorageMigrationTest(unittest.TestCase):
         self.assertEqual(int(service["mem_limit"]), 1024 ** 3)
         self.assertEqual(float(service["cpus"]), 1.0)
 
+    def test_spark_image_contains_only_spark_runtime_files(self):
+        dockerfile = read("infra/spark/Dockerfile")
+        expected_base = (
+            "FROM apache/spark:3.5.9-scala2.12-java17-python3-ubuntu@"
+            "sha256:f3d6eaa8bab8ec2e38f3c3918a5b2f8b253c95bcb19f9e87ad0e0cdacf9df2d5"
+        )
+        self.assertEqual(dockerfile.splitlines()[0], expected_base)
+        self.assertNotIn("python3-r-ubuntu", dockerfile)
+        self.assertIn("COPY src/spark /opt/demandflow/src/spark", dockerfile)
+        self.assertIn(
+            "COPY config/tables.json /opt/demandflow/config/tables.json",
+            dockerfile,
+        )
+        self.assertNotRegex(dockerfile, r"(?m)^COPY\s+src\s")
+        self.assertNotRegex(dockerfile, r"(?m)^COPY\s+config\s")
+        self.assertRegex(dockerfile, r"(?m)^USER spark$")
+
+        service = self.services["spark"]
+        mounts = {mount["target"]: mount for mount in service["volumes"]}
+        self.assertEqual(
+            set(mounts),
+            {
+                "/opt/demandflow/src/spark",
+                "/opt/demandflow/config/tables.json",
+            },
+        )
+        expected_sources = {
+            "/opt/demandflow/src/spark": ROOT / "src/spark",
+            "/opt/demandflow/config/tables.json": ROOT / "config/tables.json",
+        }
+        for target, expected_source in expected_sources.items():
+            with self.subTest(target=target):
+                self.assertTrue(mounts[target]["read_only"])
+                self.assertEqual(
+                    Path(mounts[target]["source"]).resolve(),
+                    expected_source.resolve(),
+                )
+
+        # Isolation applies only to the Spark image. CDC source components stay
+        # present and referenced by their own workflow.
+        self.assertTrue(ROOT.joinpath("src/generator/main.py").is_file())
+        self.assertTrue(
+            ROOT.joinpath("config/debezium/postgres-connector.json").is_file()
+        )
+        self.assertIn(
+            r"config\debezium\postgres-connector.json",
+            read("scripts/register-debezium-connector.ps1"),
+        )
+        for service_name in ("postgres", "kafka", "debezium", "spark"):
+            self.assertIn(service_name, self.services)
+
     def test_consumers_share_external_pipeline_credentials(self):
         expected_file = self.config["secrets"]["s3_credentials"]["file"]
         consumers = ["spark", "hive-metastore", "trino"] + [
