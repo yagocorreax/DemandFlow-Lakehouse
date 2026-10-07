@@ -19,20 +19,11 @@ TABLE_PATH = (
 
 
 def create_spark_session() -> SparkSession:
-    endpoint = os.getenv(
-        "LOCALSTACK_INTERNAL_ENDPOINT",
-        "http://localstack:4566", 
-    )
-
-    access_key = os.getenv(
-        "AWS_ACCESS_KEY_ID",
-        "test",
-    )
-
-    secret_key = os.getenv(
-        "AWS_SECRET_ACCESS_KEY",
-        "test",
-    )
+    endpoint = os.environ["S3_INTERNAL_ENDPOINT"]
+    access_key = os.environ["AWS_ACCESS_KEY_ID"]
+    secret_key = os.environ["AWS_SECRET_ACCESS_KEY"]
+    if not all((endpoint, access_key, secret_key)):
+        raise ValueError("Configure o endpoint S3 e as credenciais do pipeline.")
 
     return (
         SparkSession.builder
