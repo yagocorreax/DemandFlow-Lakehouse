@@ -151,6 +151,23 @@ class StorageMigrationTest(unittest.TestCase):
         )
         self.assertIn(".env", read(".gitignore").splitlines())
 
+    def test_debezium_password_rotation_is_isolated_and_non_disclosing(self):
+        script = read("scripts/rotate-debezium-password.ps1")
+
+        self.assertIn('"DEBEZIUM_POSTGRES_PASSWORD"', script)
+        self.assertNotIn('"POSTGRES_PASSWORD"', script)
+        self.assertIn("RandomNumberGenerator", script)
+        self.assertIn("docker compose up -d --no-deps postgres", script)
+        self.assertIn("docker compose stop -t 30 postgres", script)
+        self.assertIn("[System.IO.File]::Replace", script)
+        self.assertIn("IFS= read -r PGPASSWORD", script)
+        self.assertIn("IFS= read -r PGUSER", script)
+        self.assertIn("carriage_return=", script)
+        self.assertIn("export PGPASSWORD PGUSER PGDATABASE", script)
+        self.assertNotIn('Write-Host $newPassword', script)
+        self.assertNotIn('Write-Output $newPassword', script)
+        self.assertNotRegex(script, r'(?i)-v\s+["\']?cdc_password=')
+
     def test_consumers_share_external_pipeline_credentials(self):
         expected_file = self.config["secrets"]["s3_credentials"]["file"]
         consumers = ["spark", "hive-metastore", "trino"] + [
