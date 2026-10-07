@@ -180,6 +180,31 @@ histórico do Git. A credencial anterior deve ser tratada como exposta até ser
 rotacionada no PostgreSQL e no `.env`. Reescrever o histórico não substitui a
 rotação e não faz parte deste bloco.
 
+### Estado da rotação da credencial CDC em 07/10/2026
+
+`scripts/rotate-debezium-password.ps1` foi criado para executar uma rotação
+isolada: exige todos os demais serviços parados, inicia somente o PostgreSQL,
+gera 256 bits aleatórios, entrega credenciais ao cliente pela entrada padrão,
+prepara a atualização atômica do `.env`, valida autenticação positiva e
+negativa e sempre para o banco. O script não imprime valores e possui rollback.
+
+A rotação não foi aplicada porque a validação anterior à alteração comprovou
+que as senhas administrativa e CDC presentes no `.env` já não autenticam no
+volume PostgreSQL existente. O papel CDC existe, possui `LOGIN`,
+`REPLICATION` e `CONNECT`, armazena um verificador SCRAM e o host rejeita
+senhas incorretas. Isso demonstra uma dessincronização preexistente entre o
+`.env` e o volume, não uma falha de autorização do papel.
+
+Todas as tentativas pararam antes do `ALTER ROLE` e antes da substituição do
+`.env`. O PostgreSQL foi parado ao final e nenhum outro serviço foi iniciado.
+Uma reconciliação segura precisa preservar em memória o verificador SCRAM atual
+para rollback antes de definir e validar uma nova credencial.
+
+O script legado `scripts/configure-postgres-cdc.ps1` ainda entrega
+`cdc_password` ao `psql` por argumento de processo. Ele não foi executado nem
+alterado neste bloco e não deve ser usado com a nova credencial antes de um
+endurecimento separado que mova esse valor para a entrada padrão.
+
 O Docker Scout está instalado, mas recusou a análise sem login no Docker ID.
 Trivy, Grype e OSV Scanner não estão instalados. Portanto, a ausência de um
 inventário de CVEs continua sendo uma limitação conhecida; não deve ser
@@ -257,9 +282,9 @@ git diff --check
 
 Resultado atual:
 
-- dez testes de consistência passaram, incluindo isolamento da imagem Spark,
+- onze testes de consistência passaram, incluindo isolamento da imagem Spark,
   preservação dos componentes Generator/CDC e injeção segura da senha Debezium;
-- 19 scripts PowerShell passaram pelo parser sem execução operacional;
+- 20 scripts PowerShell passaram pelo parser sem execução operacional;
 - scripts shell passaram em `sh -n`;
 - Compose completo e `git diff --check` passaram;
 - arquivos de licença e credenciais estão ignorados pelo Git e pelo contexto de
@@ -288,12 +313,14 @@ mas não são consumidas pela configuração atual.
 
 Cada bloco exige nova autorização e termina com os serviços parados:
 
-1. rotacionar de forma coordenada a credencial dedicada do Debezium no
-   PostgreSQL e no `.env`, validando o login com somente o banco iniciado;
-2. avaliar um cache Ivy persistente e isolado para os jobs Spark;
-3. validar PostgreSQL, Kafka e Debezium em blocos pequenos;
-4. validar Hive Metastore e Trino;
-5. validar Airflow somente após suas dependências isoladas.
+1. reconciliar a credencial dedicada do Debezium usando o verificador SCRAM
+   atual como rollback, sem iniciar Kafka ou Debezium;
+2. remover a senha dos argumentos de processo em
+   `configure-postgres-cdc.ps1` antes do teste CDC;
+3. avaliar um cache Ivy persistente e isolado para os jobs Spark;
+4. validar PostgreSQL, Kafka e Debezium em blocos pequenos;
+5. validar Hive Metastore e Trino;
+6. validar Airflow somente após suas dependências isoladas.
 
 ## Referências oficiais
 
@@ -302,3 +329,4 @@ Cada bloco exige nova autorização e termina com os serviços parados:
 - [Identidades locais e políticas](https://docs.min.io/aistor/administration/iam/identity/built-in-identity/)
 - [Expansão de ambiente no Hadoop](https://hadoop.apache.org/docs/r3.3.6/api/org/apache/hadoop/conf/Configuration.html)
 - [Validação do Docker Compose](https://docs.docker.com/reference/cli/docker/compose/config/)
+- [PostgreSQL 16: restauração de senhas criptografadas de papéis](https://www.postgresql.org/docs/16/sql-createrole.html)
