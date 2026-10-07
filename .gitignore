@@ -2,6 +2,11 @@
 .env
 *.pem
 *.key
+*.license
+.demandflow-secrets/
+s3.env
+minio-root-user
+minio-root-password
 
 # Python
 __pycache__/
