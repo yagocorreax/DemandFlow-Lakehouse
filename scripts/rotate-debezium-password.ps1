@@ -5,6 +5,7 @@ $projectRoot = Split-Path -Parent $PSScriptRoot
 $envFile = Join-Path $projectRoot ".env"
 $containerName = "demandflow-postgres"
 $preparedEnvFile = $null
+$envBackupFiles = New-Object System.Collections.Generic.List[string]
 $postgresStartAttempted = $false
 $databaseUsesNewPassword = $false
 $envUsesNewPassword = $false
@@ -130,10 +131,22 @@ function New-PreparedEnvFile {
 function Replace-EnvAtomically {
     param(
         [Parameter(Mandatory)]
-        [string]$PreparedFile
+        [string]$PreparedFile,
+
+        [Parameter(Mandatory)]
+        [bool]$UsesNewPassword
     )
 
-    [System.IO.File]::Replace($PreparedFile, $envFile, $null)
+    $backupFile = Join-Path (
+        Split-Path -Parent $envFile
+    ) (".env.rotation-backup-{0}.tmp" -f [guid]::NewGuid().ToString("N"))
+    $envBackupFiles.Add($backupFile)
+
+    [System.IO.File]::Replace($PreparedFile, $envFile, $backupFile)
+    $script:envUsesNewPassword = $UsesNewPassword
+    [System.IO.File]::SetAccessControl($backupFile, $script:originalEnvAcl)
+    [System.IO.File]::Delete($backupFile)
+    $null = $envBackupFiles.Remove($backupFile)
 }
 
 function Set-CdcDatabasePassword {
@@ -170,35 +183,37 @@ function Test-CdcLogin {
         [string]$Password
     )
 
-    $loginScript = @'
-IFS= read -r PGPASSWORD
-IFS= read -r PGUSER
-IFS= read -r PGDATABASE
-carriage_return="$(printf '\r')"
-PGPASSWORD="${PGPASSWORD%"$carriage_return"}"
-PGUSER="${PGUSER%"$carriage_return"}"
-PGDATABASE="${PGDATABASE%"$carriage_return"}"
-export PGPASSWORD PGUSER PGDATABASE
-exec psql -X -qAt -h 127.0.0.1 -c "SELECT 1"
-'@
+    $encodedPassword = [Convert]::ToBase64String(
+        [Text.Encoding]::UTF8.GetBytes($Password)
+    )
+    $encodedUser = [Convert]::ToBase64String(
+        [Text.Encoding]::UTF8.GetBytes($script:cdcUser)
+    )
+    $encodedDatabase = [Convert]::ToBase64String(
+        [Text.Encoding]::UTF8.GetBytes($script:database)
+    )
+    $loginScript = (
+        'PGPASSWORD=$(printf ''%s'' ''{0}'' | base64 -d); ' +
+        'PGUSER=$(printf ''%s'' ''{1}'' | base64 -d); ' +
+        'PGDATABASE=$(printf ''%s'' ''{2}'' | base64 -d); ' +
+        'export PGPASSWORD PGUSER PGDATABASE; ' +
+        'exec psql -X -qAt -h postgres -c "SELECT 1"; # end'
+    ) -f $encodedPassword, $encodedUser, $encodedDatabase
 
-    $loginInput = (
-        $Password,
-        $script:cdcUser,
-        $script:database
-    ) -join "`n"
     $previousErrorAction = $ErrorActionPreference
 
     try {
         $ErrorActionPreference = "Continue"
-        $output = ($loginInput + "`n") |
-            & docker exec -i $script:containerName `
-                sh -c $loginScript `
-                2>$null
+        $output = $loginScript |
+            & docker exec -i $script:containerName sh 2>$null
         $exitCode = $LASTEXITCODE
     }
     finally {
         $ErrorActionPreference = $previousErrorAction
+        $loginScript = $null
+        $encodedPassword = $null
+        $encodedUser = $null
+        $encodedDatabase = $null
     }
 
     return (
@@ -230,6 +245,36 @@ function Assert-CdcRole {
         ([string]::Join("", @($output))).Trim() -ne "ok") {
         throw "O papel CDC não existe ou não possui LOGIN e REPLICATION."
     }
+}
+
+function Get-CdcPasswordVerifier {
+    $quotedRole = "'" + $script:cdcUser.Replace("'", "''") + "'"
+    $sql = "SELECT rolpassword FROM pg_authid WHERE rolname = $quotedRole;"
+    $previousErrorAction = $ErrorActionPreference
+
+    try {
+        $ErrorActionPreference = "Continue"
+        $output = @(
+            $sql | & docker exec -i $script:containerName psql -X -qAt -v ON_ERROR_STOP=1 -U $script:postgresUser -d $script:database 2>$null
+        )
+        $exitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorAction
+    }
+
+    if ($exitCode -ne 0 -or $output.Count -ne 1) {
+        throw "Não foi possível preservar o verificador da credencial CDC."
+    }
+
+    $verifier = ([string]$output[0]).Trim()
+    $output = $null
+    $scramPattern = '^SCRAM-SHA-256\$[1-9][0-9]*:[A-Za-z0-9+/]+={0,2}\$[A-Za-z0-9+/]+={0,2}:[A-Za-z0-9+/]+={0,2}$'
+    if ($verifier.Length -gt 4096 -or $verifier -cnotmatch $scramPattern) {
+        throw "O papel CDC não possui um verificador SCRAM restaurável."
+    }
+
+    return $verifier
 }
 
 if (-not (Test-Path -LiteralPath $envFile -PathType Leaf)) {
@@ -319,17 +364,28 @@ try {
 
     Write-Host "PostgreSQL saudável e isolado."
     Assert-CdcRole
+    $originalVerifier = Get-CdcPasswordVerifier
 
-    if (-not (Test-CdcLogin $oldPassword)) {
-        throw "A credencial CDC atual não autentica; nenhuma rotação foi feita."
-    }
     if (Test-CdcLogin $newPassword) {
         throw "A autenticação não está rejeitando uma credencial incorreta."
+    }
+
+    $envCredentialWasSynchronized = Test-CdcLogin $oldPassword
+    if ($envCredentialWasSynchronized) {
+        Write-Host "Credencial CDC atual sincronizada; rollback SCRAM preservado."
+    }
+    else {
+        Write-Host "Dessincronização confirmada; iniciando reconciliação com rollback SCRAM."
     }
 
     Write-Host "Estado atual validado; rotacionando a credencial CDC..."
     Set-CdcDatabasePassword $newPassword
     $databaseUsesNewPassword = $true
+
+    $postRotationVerifier = Get-CdcPasswordVerifier
+    if ($postRotationVerifier -ceq $originalVerifier) {
+        throw "O verificador SCRAM não mudou após a rotação."
+    }
 
     if (-not (Test-CdcLogin $newPassword)) {
         throw "A nova credencial não autenticou após a alteração no banco."
@@ -338,9 +394,8 @@ try {
         throw "A credencial anterior continuou autenticando após a rotação."
     }
 
-    Replace-EnvAtomically $preparedEnvFile
+    Replace-EnvAtomically $preparedEnvFile $true
     $preparedEnvFile = $null
-    $envUsesNewPassword = $true
 
     $persistedText = [System.IO.File]::ReadAllText($envFile)
     $persistedPassword = Get-DotEnvValue `
@@ -363,11 +418,14 @@ catch {
 
     if ($databaseUsesNewPassword) {
         try {
-            Set-CdcDatabasePassword $oldPassword
-            if (-not (Test-CdcLogin $oldPassword)) {
-                throw "A credencial anterior não autenticou após o rollback."
-            }
+            Set-CdcDatabasePassword $originalVerifier
             $databaseUsesNewPassword = $false
+            $restoredVerifier = Get-CdcPasswordVerifier
+            if ($restoredVerifier -cne $originalVerifier) {
+                $databaseUsesNewPassword = $true
+                throw "O verificador SCRAM original não foi restaurado."
+            }
+            $restoredVerifier = $null
         }
         catch {
             $rollbackFailures.Add("banco")
@@ -380,8 +438,7 @@ catch {
                 $originalEnvText `
                 $utf8Encoding `
                 $originalEnvAcl
-            Replace-EnvAtomically $rollbackEnvFile
-            $envUsesNewPassword = $false
+            Replace-EnvAtomically $rollbackEnvFile $false
         }
         catch {
             $rollbackFailures.Add(".env")
@@ -393,8 +450,7 @@ catch {
                 $newEnvText `
                 $utf8Encoding `
                 $originalEnvAcl
-            Replace-EnvAtomically $recoveryEnvFile
-            $envUsesNewPassword = $true
+            Replace-EnvAtomically $recoveryEnvFile $true
         }
         catch {
             $rollbackFailures.Add("sincronização emergencial do .env")
@@ -419,9 +475,28 @@ finally {
     $oldPassword = $null
     $newPassword = $null
     $persistedPassword = $null
+    $originalVerifier = $null
+    $postRotationVerifier = $null
+    $restoredVerifier = $null
 
+    $cleanupFailures = New-Object System.Collections.Generic.List[string]
     if ($preparedEnvFile -and (Test-Path -LiteralPath $preparedEnvFile)) {
-        Remove-Item -LiteralPath $preparedEnvFile -Force
+        try {
+            Remove-Item -LiteralPath $preparedEnvFile -Force
+        }
+        catch {
+            $cleanupFailures.Add("arquivo preparado")
+        }
+    }
+    foreach ($backupFile in @($envBackupFiles)) {
+        if (Test-Path -LiteralPath $backupFile) {
+            try {
+                Remove-Item -LiteralPath $backupFile -Force
+            }
+            catch {
+                $cleanupFailures.Add("backup temporário")
+            }
+        }
     }
 
     if ($postgresStartAttempted) {
@@ -442,6 +517,13 @@ finally {
     }
 
     Pop-Location
+
+    if ($cleanupFailures.Count -ne 0) {
+        throw (
+            "A limpeza de arquivos temporários exige revisão manual: " +
+            [string]::Join(", ", $cleanupFailures)
+        )
+    }
 }
 
 if (-not $rotationCompleted) {
