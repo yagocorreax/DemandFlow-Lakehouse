@@ -160,13 +160,31 @@ class StorageMigrationTest(unittest.TestCase):
         self.assertIn("docker compose up -d --no-deps postgres", script)
         self.assertIn("docker compose stop -t 30 postgres", script)
         self.assertIn("[System.IO.File]::Replace", script)
-        self.assertIn("IFS= read -r PGPASSWORD", script)
-        self.assertIn("IFS= read -r PGUSER", script)
-        self.assertIn("carriage_return=", script)
+        self.assertIn(".env.rotation-backup-", script)
+        self.assertNotIn("$envFile, $null", script)
+        self.assertIn("[Convert]::ToBase64String", script)
+        self.assertIn("PGPASSWORD=$(printf", script)
+        self.assertIn("docker exec -i $script:containerName sh", script)
+        self.assertIn('-h postgres', script)
+        self.assertNotIn('-h 127.0.0.1', script)
+        self.assertIn("# end", script)
         self.assertIn("export PGPASSWORD PGUSER PGDATABASE", script)
+        self.assertIn("SELECT rolpassword FROM pg_authid", script)
+        self.assertIn("SCRAM-SHA-256", script)
+        self.assertIn("Set-CdcDatabasePassword $originalVerifier", script)
+        self.assertNotIn("Set-CdcDatabasePassword $oldPassword", script)
+        self.assertLess(
+            script.index("$originalVerifier = Get-CdcPasswordVerifier"),
+            script.index("Set-CdcDatabasePassword $newPassword"),
+        )
         self.assertNotIn('Write-Host $newPassword', script)
         self.assertNotIn('Write-Output $newPassword', script)
+        self.assertNotRegex(
+            script,
+            r"(?i)Write-(?:Host|Output)[^\n]*(?:verifier|rolpassword)",
+        )
         self.assertNotRegex(script, r'(?i)-v\s+["\']?cdc_password=')
+        self.assertNotRegex(script, r'(?i)-e\s+["\']?PGPASSWORD=')
 
     def test_consumers_share_external_pipeline_credentials(self):
         expected_file = self.config["secrets"]["s3_credentials"]["file"]
