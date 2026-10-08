@@ -210,10 +210,39 @@ loopback `trust`. Eles não demonstravam dessincronização do volume. As tentat
 que alcançaram `ALTER ROLE` exercitaram o rollback SCRAM com restauração exata
 antes da execução final bem-sucedida.
 
-O script legado `scripts/configure-postgres-cdc.ps1` ainda entrega
-`cdc_password` ao `psql` por argumento de processo. Ele não foi executado nem
-alterado neste bloco e não deve ser usado com a nova credencial antes de um
-endurecimento separado que mova esse valor para a entrada padrão.
+### Endurecimento da configuração PostgreSQL CDC em 07/10/2026
+
+`scripts/configure-postgres-cdc.ps1` deixou de entregar `cdc_password` ao
+`psql` por argumento de processo. O SQL agora carrega usuário, banco e senha
+com `\getenv`; os valores são codificados somente em memória e enviados ao
+shell do contêiner pela entrada padrão. O comando visível do `docker exec`
+contém apenas `sh`, e o valor sensível não é escrito na saída.
+
+O fluxo também foi tornado fail-closed para a infraestrutura local:
+
+- exige que nenhum serviço do projeto esteja ativo antes de começar;
+- usa `docker compose up -d --no-deps postgres` e confirma que somente
+  `postgres` está rodando;
+- falha explicitamente se o healthcheck não ficar saudável no prazo;
+- valida `wal_level=logical`, LOGIN, REPLICATION, CONNECT, USAGE, SELECT nas
+  tabelas e sequências atuais, privilégio padrão de SELECT e a publicação para
+  todas as tabelas;
+- autentica pelo hostname `postgres`, exercitando SCRAM, e confirma a rejeição
+  de uma senha aleatória incorreta;
+- reaplica a configuração no mesmo bloco para comprovar repetibilidade;
+- sempre para o PostgreSQL no `finally` e confirma que não restou serviço
+  ativo.
+
+Na primeira tentativa, a consulta de validação permitia ao otimizador avaliar
+`has_sequence_privilege` sobre um índice antes do filtro de tipo da relação. A
+consulta foi protegida com `CASE`, garantindo que as funções de privilégio
+recebam somente objetos compatíveis. A execução corrigida passou integralmente,
+sem alterar a credencial rotacionada e sem iniciar Kafka ou Debezium.
+
+O segredo ainda existe temporariamente no ambiente do processo `psql` dentro
+do contêiner, necessário para `\getenv`, e um administrador do host/Docker pode
+inspecionar processos. A melhoria elimina a exposição em argumentos e saída,
+mas não transforma o ambiente local em um cofre de segredos.
 
 O Docker Scout está instalado, mas recusou a análise sem login no Docker ID.
 Trivy, Grype e OSV Scanner não estão instalados. Portanto, a ausência de um
@@ -292,8 +321,9 @@ git diff --check
 
 Resultado atual:
 
-- onze testes de consistência passaram, incluindo isolamento da imagem Spark,
-  preservação dos componentes Generator/CDC e injeção segura da senha Debezium;
+- doze testes de consistência passaram, incluindo isolamento da imagem Spark,
+  preservação dos componentes Generator/CDC, injeção segura e configuração
+  PostgreSQL sem senha em argumentos;
 - 20 scripts PowerShell passaram pelo parser sem execução operacional;
 - scripts shell passaram em `sh -n`;
 - Compose completo e `git diff --check` passaram;
@@ -323,12 +353,19 @@ mas não são consumidas pela configuração atual.
 
 Cada bloco exige nova autorização e termina com os serviços parados:
 
-1. remover a senha dos argumentos de processo em
-   `configure-postgres-cdc.ps1` antes do teste CDC;
-2. avaliar um cache Ivy persistente e isolado para os jobs Spark;
-3. validar PostgreSQL, Kafka e Debezium em blocos pequenos;
-4. validar Hive Metastore e Trino;
-5. validar Airflow somente após suas dependências isoladas.
+1. validar o CDC funcional com PostgreSQL, Kafka, Debezium e Generator:
+   insert/update/delete, payload, offsets e reinício;
+2. avaliar o cache Ivy e validar Raw → Bronze → Silver → Gold, dividindo o
+   processamento em dois blocos se a pressão local exigir;
+3. validar Hive Metastore, Trino e Superset sobre os dados Gold;
+4. validar o DAG Airflow ponta a ponta, repetibilidade e retomada;
+5. executar a auditoria final de segurança/desempenho, inventário de CVEs na
+   medida em que uma ferramenta estiver disponível, documentação e checklist
+   de entrega.
+
+Esses são cinco blocos principais restantes. Pelas limitações da máquina, o
+segundo pode virar dois ou três blocos operacionais; portanto, a projeção é de
+cinco blocos macro ou seis a sete execuções controladas após este ponto.
 
 ## Referências oficiais
 
@@ -338,3 +375,5 @@ Cada bloco exige nova autorização e termina com os serviços parados:
 - [Expansão de ambiente no Hadoop](https://hadoop.apache.org/docs/r3.3.6/api/org/apache/hadoop/conf/Configuration.html)
 - [Validação do Docker Compose](https://docs.docker.com/reference/cli/docker/compose/config/)
 - [PostgreSQL 16: restauração de senhas criptografadas de papéis](https://www.postgresql.org/docs/16/sql-createrole.html)
+- [PostgreSQL 16: `psql`, `\getenv` e interpolação segura](https://www.postgresql.org/docs/16/app-psql.html)
+- [PostgreSQL 16: funções de consulta de privilégios](https://www.postgresql.org/docs/16/functions-info.html)
