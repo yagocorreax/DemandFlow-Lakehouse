@@ -186,6 +186,36 @@ class StorageMigrationTest(unittest.TestCase):
         self.assertNotRegex(script, r'(?i)-v\s+["\']?cdc_password=')
         self.assertNotRegex(script, r'(?i)-e\s+["\']?PGPASSWORD=')
 
+    def test_postgres_cdc_setup_is_isolated_and_non_disclosing(self):
+        script = read("scripts/configure-postgres-cdc.ps1")
+        setup_sql = read("infra/postgres/cdc/setup.sql")
+
+        self.assertIn("Set-StrictMode -Version Latest", script)
+        self.assertIn("está duplicada no .env", script)
+        self.assertIn("está vazia no .env", script)
+        self.assertIn("docker compose up -d --no-deps postgres", script)
+        self.assertIn("docker compose stop -t 30 postgres", script)
+        self.assertIn("docker exec -i $script:containerName sh", script)
+        self.assertIn("[Convert]::ToBase64String", script)
+        self.assertIn("DEBEZIUM_POSTGRES_PASSWORD=$(printf", script)
+        self.assertIn("export PGUSER PGDATABASE DEBEZIUM_POSTGRES_USER", script)
+        self.assertIn("-h postgres", script)
+        self.assertIn("Invoke-CdcSetup", script)
+        self.assertGreaterEqual(script.count("Invoke-CdcSetup"), 3)
+        self.assertNotRegex(script, r'(?i)-v\s+["\']?cdc_password=')
+        self.assertNotRegex(script, r'(?i)-e\s+["\']?PGPASSWORD=')
+        self.assertNotRegex(
+            script,
+            r"(?i)Write-(?:Host|Output)[^\n]*cdcPassword",
+        )
+
+        self.assertIn(
+            r"\getenv cdc_password DEBEZIUM_POSTGRES_PASSWORD",
+            setup_sql,
+        )
+        self.assertIn(r"\getenv cdc_user DEBEZIUM_POSTGRES_USER", setup_sql)
+        self.assertIn(r"\getenv database_name POSTGRES_DATABASE", setup_sql)
+
     def test_consumers_share_external_pipeline_credentials(self):
         expected_file = self.config["secrets"]["s3_credentials"]["file"]
         consumers = ["spark", "hive-metastore", "trino"] + [
