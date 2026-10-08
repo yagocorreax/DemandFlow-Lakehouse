@@ -1,4 +1,7 @@
 \set ON_ERROR_STOP on
+\getenv cdc_user DEBEZIUM_POSTGRES_USER
+\getenv cdc_password DEBEZIUM_POSTGRES_PASSWORD
+\getenv database_name POSTGRES_DATABASE
 
 SELECT format(
     'CREATE ROLE %I WITH LOGIN REPLICATION PASSWORD %L',
