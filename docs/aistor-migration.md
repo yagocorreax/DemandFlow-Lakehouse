@@ -184,21 +184,31 @@ rotação e não faz parte deste bloco.
 
 `scripts/rotate-debezium-password.ps1` foi criado para executar uma rotação
 isolada: exige todos os demais serviços parados, inicia somente o PostgreSQL,
-gera 256 bits aleatórios, entrega credenciais ao cliente pela entrada padrão,
-prepara a atualização atômica do `.env`, valida autenticação positiva e
-negativa e sempre para o banco. O script não imprime valores e possui rollback.
+gera 256 bits aleatórios e preserva exclusivamente em memória o verificador
+SCRAM anterior. Credenciais são codificadas em memória e enviadas dentro de um
+script pela entrada padrão; não aparecem em argumentos ou na saída.
 
-A rotação não foi aplicada porque a validação anterior à alteração comprovou
-que as senhas administrativa e CDC presentes no `.env` já não autenticam no
-volume PostgreSQL existente. O papel CDC existe, possui `LOGIN`,
-`REPLICATION` e `CONNECT`, armazena um verificador SCRAM e o host rejeita
-senhas incorretas. Isso demonstra uma dessincronização preexistente entre o
-`.env` e o volume, não uma falha de autorização do papel.
+A autenticação é testada pelo hostname de rede `postgres`, que exercita
+`scram-sha-256`, e não pelo loopback coberto por uma regra local `trust`. A troca
+do `.env` usa `File.Replace` com backup explícito, ACL preservada e limpeza dos
+temporários. O verificador anterior é restaurado e comparado byte a byte em
+qualquer falha ocorrida antes da confirmação final.
 
-Todas as tentativas pararam antes do `ALTER ROLE` e antes da substituição do
-`.env`. O PostgreSQL foi parado ao final e nenhum outro serviço foi iniciado.
-Uma reconciliação segura precisa preservar em memória o verificador SCRAM atual
-para rollback antes de definir e validar uma nova credencial.
+A rotação foi concluída em 07/10/2026:
+
+- o verificador SCRAM original foi preservado antes do `ALTER ROLE`;
+- a nova credencial autenticou e a credencial anterior foi rejeitada;
+- o `.env` foi substituído atomicamente e sua credencial foi revalidada;
+- após parar e iniciar novamente o PostgreSQL, a nova credencial continuou
+  autenticando e uma senha aleatória foi rejeitada;
+- nenhum valor de senha ou verificador foi exibido;
+- somente o PostgreSQL foi iniciado e ele foi parado ao final.
+
+Os falsos negativos observados nas primeiras tentativas vinham da serialização
+multilinha entre Windows PowerShell e o shell Linux e, depois, do teste via
+loopback `trust`. Eles não demonstravam dessincronização do volume. As tentativas
+que alcançaram `ALTER ROLE` exercitaram o rollback SCRAM com restauração exata
+antes da execução final bem-sucedida.
 
 O script legado `scripts/configure-postgres-cdc.ps1` ainda entrega
 `cdc_password` ao `psql` por argumento de processo. Ele não foi executado nem
@@ -313,14 +323,12 @@ mas não são consumidas pela configuração atual.
 
 Cada bloco exige nova autorização e termina com os serviços parados:
 
-1. reconciliar a credencial dedicada do Debezium usando o verificador SCRAM
-   atual como rollback, sem iniciar Kafka ou Debezium;
-2. remover a senha dos argumentos de processo em
+1. remover a senha dos argumentos de processo em
    `configure-postgres-cdc.ps1` antes do teste CDC;
-3. avaliar um cache Ivy persistente e isolado para os jobs Spark;
-4. validar PostgreSQL, Kafka e Debezium em blocos pequenos;
-5. validar Hive Metastore e Trino;
-6. validar Airflow somente após suas dependências isoladas.
+2. avaliar um cache Ivy persistente e isolado para os jobs Spark;
+3. validar PostgreSQL, Kafka e Debezium em blocos pequenos;
+4. validar Hive Metastore e Trino;
+5. validar Airflow somente após suas dependências isoladas.
 
 ## Referências oficiais
 
