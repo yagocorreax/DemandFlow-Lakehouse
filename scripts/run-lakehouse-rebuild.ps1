@@ -24,13 +24,6 @@ try {
         trino hive-metastore
 
     # --------------------------------------------------
-    # S3 STORAGE
-    # --------------------------------------------------
-
-    Write-Host ""
-    & "$PSScriptRoot\start-storage.ps1" -Bootstrap
-
-    # --------------------------------------------------
     # RAW
     # --------------------------------------------------
 
@@ -38,11 +31,6 @@ try {
     Write-Host "====================================="
     Write-Host "[1/4] RAW"
     Write-Host "====================================="
-
-    docker compose --profile cdc up -d `
-        postgres kafka debezium
-
-    Start-Sleep -Seconds 20
 
     & "$PSScriptRoot\run-raw-ingestion.ps1"
 
