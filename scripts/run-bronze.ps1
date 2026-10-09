@@ -14,6 +14,7 @@ try {
         --profile processing `
         run `
         --rm `
+        --no-deps `
         spark `
         /opt/spark/bin/spark-submit `
         --master "local[2]" `
