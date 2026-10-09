@@ -19,7 +19,7 @@ try {
         --driver-memory "1g" `
         --packages `
         "org.apache.hadoop:hadoop-aws:3.3.4" `
-        --conf "spark.jars.ivy=/tmp/.ivy2" `
+        --conf "spark.jars.ivy=/opt/demandflow/.ivy2" `
         /opt/demandflow/src/spark/raw/validate_raw.py
 
     if ($LASTEXITCODE -ne 0) {
