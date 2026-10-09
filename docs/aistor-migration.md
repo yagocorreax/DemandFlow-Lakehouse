@@ -466,6 +466,57 @@ Após confirmar `CURRENT-OFFSET=1`, `LOG-END-OFFSET=1` e `LAG=0` no grupo
 `kafka-signal`, o template final também foi sincronizado no estado persistente
 do Kafka Connect; a API confirmou somente as propriedades não secretas.
 
+### Validação Raw → Bronze em 09/10/2026
+
+A transformação passou a escolher explicitamente a imagem `before` somente
+para `DELETE` e a imagem `after` para `READ`, `CREATE` e `UPDATE`. O uso anterior
+de `coalesce(after.campo, before.campo)` confundia um `NULL` legítimo gravado
+por um `UPDATE` com ausência da imagem nova e poderia restaurar o valor antigo.
+
+O processamento incremental agora reconstrói o último evento no histórico de
+cada chave afetada e só altera `current` quando a tupla ordenadora completa
+(`source_lsn`, timestamp Kafka, partição e offset) é posterior à armazenada.
+Isso impede tanto rollback por evento atrasado quanto ressurreição de uma chave
+cujo evento mais novo é um tombstone de exclusão.
+
+O validador deixou de ignorar estruturas ausentes. Para as oito tabelas ele
+agora exige, em modo fail-closed:
+
+- igualdade bidirecional dos `event_id` entre Raw e Bronze Events;
+- igualdade dos metadados e do payload `before`/`after` novamente interpretado
+  a partir do JSON Raw;
+- unicidade, PK não nula e operações válidas;
+- replay completo de Events igual, coluna a coluna, à Bronze Current;
+- Change Data Feed ativo em todas as 16 tabelas Delta;
+- snapshot Raw mínimo ainda presente antes de aceitar o resultado.
+
+O primeiro processamento criou 479 linhas em Events e 461 linhas ativas em
+Current. As cardinalidades `Events/Current` foram:
+
+- `stores=3/3` e `products=6/6`;
+- `promotions=16/2`;
+- `orders=49/48` e `order_items=49/48`;
+- `inventory=19/18`;
+- `inventory_movements=85/84`;
+- `demand_forecasts=252/252`.
+
+As diferenças refletem os 18 eventos CDC históricos anteriores ao snapshot;
+o replay preserva somente o estado mais novo e exclui tombstones. Houve zero
+evento ausente ou extra, zero divergência de payload e zero divergência em
+Current. Todas as tabelas foram criadas na versão Delta `0`.
+
+Na repetição, as oito métricas `BRONZE_NEW_EVENTS_*` permaneceram em zero. Uma
+segunda auditoria confirmou as mesmas contagens e as mesmas 16 versões Delta,
+provando que não ocorreu escrita vazia. O primeiro job aqueceu no volume Ivy os
+três artefatos Delta ainda ausentes; as três execuções seguintes resolveram
+seis dependências com zero download. Durante a carga, o Spark ficou em cerca de
+1,67 GiB do limite de 3 GiB e o AIStor em cerca de 430 MiB do limite de 1 GiB.
+
+`scripts/validate-bronze-pipeline.ps1` automatiza execução, auditoria,
+repetição, comparação de versões e limpeza. Somente AIStor e um job Spark
+efêmero ficaram ativos por vez; todos os serviços foram confirmados parados no
+final.
+
 ## Operação isolada
 
 Preparar credenciais uma única vez:
@@ -511,11 +562,11 @@ git diff --check
 
 Resultado atual:
 
-- quinze testes de consistência passaram, incluindo isolamento da imagem Spark,
+- dezesseis testes de consistência passaram, incluindo isolamento da imagem Spark,
   preservação dos componentes Generator/CDC, injeção segura e configuração
   PostgreSQL sem senha em argumentos, o contrato do validador CDC e a
-  recuperação/idempotência Kafka → Raw;
-- 25 scripts PowerShell passaram pelo parser sem execução operacional;
+  recuperação/idempotência Kafka → Raw e a equivalência/idempotência Bronze;
+- 26 scripts PowerShell passaram pelo parser sem execução operacional;
 - scripts shell passaram em `sh -n`;
 - Compose completo e `git diff --check` passaram;
 - arquivos de licença e credenciais estão ignorados pelo Git e pelo contexto de
@@ -544,17 +595,16 @@ mas não são consumidas pela configuração atual.
 
 Cada bloco exige nova autorização e termina com os serviços parados:
 
-1. validar a transformação Raw → Bronze e sua repetibilidade;
-2. validar Bronze → Silver, qualidade e quarentena;
-3. validar Silver → Gold e suas métricas de negócio;
-4. validar Hive Metastore, Trino e Superset sobre os dados Gold;
-5. validar o DAG Airflow ponta a ponta, repetibilidade e retomada;
-6. executar a auditoria final de segurança/desempenho, incluindo heartbeat e
+1. validar Bronze → Silver, qualidade e quarentena;
+2. validar Silver → Gold e suas métricas de negócio;
+3. validar Hive Metastore, Trino e Superset sobre os dados Gold;
+4. validar o DAG Airflow ponta a ponta, repetibilidade e retomada;
+5. executar a auditoria final de segurança/desempenho, incluindo heartbeat e
    `ConfigProvider` do CDC, inventário de CVEs na
    medida em que uma ferramenta estiver disponível, documentação e checklist
    de entrega.
 
-Esses são seis blocos controlados restantes. A separação das três camadas Spark
+Esses são cinco blocos controlados restantes. A separação das três camadas Spark
 é intencional para limitar CPU e memória; falhas que exijam correção e nova
 execução podem acrescentar tentativas, mas não novos blocos planejados.
 
