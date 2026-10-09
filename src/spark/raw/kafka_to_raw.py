@@ -224,7 +224,14 @@ def main() -> None:
 
         query.awaitTermination()
 
+        progress_entries = list(query.recentProgress)
+        total_input_rows = sum(
+            int(entry.get("numInputRows", 0))
+            for entry in progress_entries
+        )
         progress = query.lastProgress
+
+        print(f"RAW_INPUT_ROWS_TOTAL={total_input_rows}")
 
         if progress:
             print(
