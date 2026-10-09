@@ -20,7 +20,7 @@ try {
         --driver-memory "2g" `
         --packages `
         "io.delta:delta-spark_2.12:3.3.2,org.apache.hadoop:hadoop-aws:3.3.4" `
-        --conf "spark.jars.ivy=/tmp/.ivy2" `
+        --conf "spark.jars.ivy=/opt/demandflow/.ivy2" `
         /opt/demandflow/src/spark/silver/bronze_to_silver.py
 
     if ($LASTEXITCODE -ne 0) {
