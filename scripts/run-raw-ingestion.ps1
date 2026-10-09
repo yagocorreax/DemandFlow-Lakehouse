@@ -5,15 +5,22 @@ $projectRoot = Split-Path -Parent $PSScriptRoot
 Push-Location $projectRoot
 
 try {
-    & "$PSScriptRoot\start-storage.ps1" -Bootstrap
-
     Write-Host "Preparando CDC..."
+
+    # A configuração PostgreSQL exige isolamento. O armazenamento é retomado
+    # logo depois, com o volume persistente preservado.
+    & docker compose stop -t 30 minio
+    if ($LASTEXITCODE -ne 0) {
+        throw "Falha ao isolar o PostgreSQL do armazenamento."
+    }
 
     & "$PSScriptRoot\configure-postgres-cdc.ps1"
 
     if ($LASTEXITCODE -ne 0) {
         throw "Falha na configuração do PostgreSQL."
     }
+
+    & "$PSScriptRoot\start-storage.ps1" -Bootstrap
 
     & "$PSScriptRoot\register-debezium-connector.ps1"
 
