@@ -418,6 +418,51 @@ class StorageMigrationTest(unittest.TestCase):
             runtime_validation,
         )
 
+    def test_bronze_pipeline_is_exact_late_event_safe_and_idempotent(self):
+        transform = read("src/spark/bronze/raw_to_bronze.py")
+        validator = read("src/spark/bronze/validate_bronze.py")
+        runtime = read("scripts/validate-bronze-pipeline.ps1")
+        runner = read("scripts/run-bronze.ps1")
+        validation_runner = read("scripts/validate-bronze.ps1")
+
+        self.assertIn('F.col("operation") == "d"', transform)
+        self.assertIn('F.col(f"before.{column_name}")', transform)
+        self.assertIn('F.col(f"after.{column_name}")', transform)
+        self.assertIn("build_source_is_newer_condition", transform)
+        self.assertIn("build_affected_current_records", transform)
+        self.assertIn("F.broadcast(affected_keys)", transform)
+        self.assertIn('"_source_lsn"', transform)
+        self.assertIn('"_kafka_offset"', transform)
+        self.assertIn('source = f"source.{column_name}"', transform)
+        self.assertIn("BRONZE_NEW_EVENTS_", transform)
+
+        for marker in (
+            "BRONZE_RAW_EVENT_COUNT=",
+            "BRONZE_EVENTS_COUNT=",
+            "BRONZE_CURRENT_COUNT=",
+            "BRONZE_MISSING_EVENTS_FROM_RAW=0",
+            "BRONZE_EXTRA_EVENTS_NOT_IN_RAW=0",
+            "BRONZE_PAYLOAD_MISMATCH_COUNT=0",
+            "BRONZE_CURRENT_MISMATCH_COUNT=0",
+            "BRONZE_CDF_ENABLED=true",
+            "BRONZE_EVENTS_VERSION_",
+            "BRONZE_CURRENT_VERSION_",
+        ):
+            self.assertIn(marker, validator)
+
+        self.assertIn("exceptAll", validator)
+        self.assertIn("compare_event_payload", validator)
+        self.assertIn("delta.enableChangeDataFeed", validator)
+        self.assertIn("MINIMUM_INITIAL_SNAPSHOT_COUNTS", validator)
+        self.assertNotIn("Pulando validação", validator)
+
+        self.assertIn("Invoke-BronzeRun -RequireZero", runtime)
+        self.assertIn("Compare-Object", runtime)
+        self.assertIn("versões Delta", runtime)
+        self.assertIn('@("spark", "minio")', runtime)
+        self.assertIn("--no-deps", runner)
+        self.assertIn("--no-deps", validation_runner)
+
     def test_consumers_share_external_pipeline_credentials(self):
         expected_file = self.config["secrets"]["s3_credentials"]["file"]
         consumers = ["spark", "hive-metastore", "trino"] + [
