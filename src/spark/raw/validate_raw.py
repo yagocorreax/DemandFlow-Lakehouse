@@ -1,6 +1,8 @@
+import json
 import os
+from pathlib import Path
 
-from pyspark.sql import SparkSession
+from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 
 
@@ -18,6 +20,21 @@ REQUIRED_COLUMNS = {
     "ingested_at",
     "ingestion_date",
     "ingestion_hour",
+}
+
+CONFIG_PATH = Path(
+    "/opt/demandflow/config/tables.json"
+)
+
+# These tables are populated by 02_seed.sql before Debezium starts. Requiring
+# their minimum snapshot cardinality prevents a first Raw consumer from
+# silently accepting a Kafka log whose old snapshot segments have expired.
+MINIMUM_INITIAL_SNAPSHOT_COUNTS = {
+    "stores": 3,
+    "products": 6,
+    "promotions": 2,
+    "inventory": 18,
+    "demand_forecasts": 252,
 }
 
 
@@ -72,6 +89,51 @@ def create_spark_session() -> SparkSession:
     )
 
 
+def validate_initial_snapshot(raw: DataFrame) -> None:
+    with CONFIG_PATH.open(
+        "r",
+        encoding="utf-8-sig",
+    ) as file:
+        configured_tables = set(json.load(file))
+
+    unknown_tables = (
+        set(MINIMUM_INITIAL_SNAPSHOT_COUNTS)
+        - configured_tables
+    )
+    if unknown_tables:
+        raise RuntimeError(
+            "O contrato do snapshot referencia tabelas não configuradas: "
+            + ", ".join(sorted(unknown_tables))
+        )
+
+    snapshot_counts = {
+        row["source_table"]: row["count"]
+        for row in (
+            raw.filter(F.col("operation") == "r")
+            .groupBy("source_table")
+            .count()
+            .collect()
+        )
+    }
+    insufficient = []
+
+    for table_name, minimum_count in (
+        MINIMUM_INITIAL_SNAPSHOT_COUNTS.items()
+    ):
+        actual_count = snapshot_counts.get(table_name, 0)
+        if actual_count < minimum_count:
+            insufficient.append(
+                f"{table_name}={actual_count}/{minimum_count}"
+            )
+
+    if insufficient:
+        raise RuntimeError(
+            "Snapshot inicial Raw ausente ou incompleto: "
+            + ", ".join(insufficient)
+            + ". Recupere o snapshot antes de executar a Bronze."
+        )
+
+
 def main() -> None:
     spark = create_spark_session()
     spark.sparkContext.setLogLevel("WARN")
@@ -119,8 +181,57 @@ def main() -> None:
                 f"{duplicate_count} event_ids duplicados."
             )
 
+        expected_event_id = F.concat_ws(
+            "-",
+            F.col("kafka_topic"),
+            F.col("kafka_partition"),
+            F.col("kafka_offset"),
+        )
+        invalid_identity_count = (
+            raw.filter(
+                F.col("event_id").isNull()
+                | (F.length(F.trim(F.col("event_id"))) == 0)
+                | (F.col("event_id") != expected_event_id)
+                | F.col("kafka_topic").isNull()
+                | (F.length(F.trim(F.col("kafka_topic"))) == 0)
+                | F.col("kafka_partition").isNull()
+                | F.col("kafka_offset").isNull()
+                | F.col("source_table").isNull()
+                | (F.length(F.trim(F.col("source_table"))) == 0)
+                | F.col("operation").isNull()
+                | (~F.col("operation").isin("r", "c", "u", "d"))
+                | F.col("load_type").isNull()
+                | (~F.col("load_type").isin("full_load", "cdc"))
+            )
+            .count()
+        )
+
+        if invalid_identity_count > 0:
+            raise RuntimeError(
+                f"Foram encontrados {invalid_identity_count} eventos "
+                "com identidade ou metadados CDC inválidos."
+            )
+
+        validate_initial_snapshot(raw)
+
+        checkpoint_path = get_required_env("RAW_CHECKPOINT_PATH")
+        hadoop_path = spark._jvm.org.apache.hadoop.fs.Path(checkpoint_path)
+        filesystem = hadoop_path.getFileSystem(
+            spark._jsc.hadoopConfiguration()
+        )
+
+        if not filesystem.exists(hadoop_path):
+            raise RuntimeError(
+                "O checkpoint da camada Raw não existe."
+            )
+
         print("")
         print(f"Total de eventos Raw: {total}")
+        print(f"RAW_EVENT_COUNT={total}")
+        print("RAW_DUPLICATE_EVENT_IDS=0")
+        print("RAW_INVALID_IDENTITY_COUNT=0")
+        print("RAW_INITIAL_SNAPSHOT_PRESENT=true")
+        print("RAW_CHECKPOINT_PRESENT=true")
 
         print("")
         print("Eventos por tabela e tipo:")
