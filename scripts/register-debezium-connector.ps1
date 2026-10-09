@@ -8,6 +8,36 @@ $configFile = Join-Path `
     $projectRoot `
     "config\debezium\postgres-connector.json"
 
+function Wait-ContainerHealthy {
+    param(
+        [Parameter(Mandatory)]
+        [string]$ContainerName,
+
+        [Parameter(Mandatory)]
+        [string]$ServiceName,
+
+        [int]$Attempts = 60,
+
+        [int]$IntervalSeconds = 2
+    )
+
+    for ($attempt = 1; $attempt -le $Attempts; $attempt++) {
+        $health = & docker inspect `
+            --format "{{.State.Health.Status}}" `
+            $ContainerName `
+            2>$null
+
+        if ($LASTEXITCODE -eq 0 -and $health -eq "healthy") {
+            Write-Host "$ServiceName saudável."
+            return
+        }
+
+        Start-Sleep -Seconds $IntervalSeconds
+    }
+
+    throw "$ServiceName não ficou saudável dentro do prazo."
+}
+
 function Get-DotEnvValue {
     param(
         [Parameter(Mandatory)]
@@ -51,6 +81,29 @@ function Get-DotEnvValue {
 
 $connectUrl = Get-DotEnvValue "KAFKA_CONNECT_URL"
 
+try {
+    $connectUri = [Uri]$connectUrl
+}
+catch {
+    throw "KAFKA_CONNECT_URL não é uma URL válida."
+}
+
+$allowedConnectHosts = @("localhost", "127.0.0.1", "::1")
+if ($connectUri.Scheme -ne "http" -or
+    $connectUri.Port -ne 8083 -or
+    $connectUri.Host -notin $allowedConnectHosts -or
+    -not [string]::IsNullOrEmpty($connectUri.UserInfo) -or
+    -not [string]::IsNullOrEmpty($connectUri.Query) -or
+    -not [string]::IsNullOrEmpty($connectUri.Fragment)) {
+    throw (
+        "KAFKA_CONNECT_URL deve apontar para o Kafka Connect local em " +
+        "http://localhost:8083 (ou loopback equivalente)."
+    )
+}
+# Compose publica o Connect somente em 127.0.0.1. Canonicalizar evita que
+# "localhost" seja resolvido como ::1 de forma intermitente no Windows.
+$connectUrl = "http://127.0.0.1:8083"
+
 $cdcUser = Get-DotEnvValue "DEBEZIUM_POSTGRES_USER"
 $cdcPassword = Get-DotEnvValue "DEBEZIUM_POSTGRES_PASSWORD"
 $database = Get-DotEnvValue "POSTGRES_DATABASE"
@@ -58,21 +111,50 @@ $database = Get-DotEnvValue "POSTGRES_DATABASE"
 Push-Location $projectRoot
 
 try {
-    Write-Host "Iniciando infraestrutura CDC..."
+    Write-Host "Iniciando PostgreSQL isoladamente..."
 
-    docker compose `
-        --profile cdc `
-        up -d postgres kafka debezium
+    & docker compose up -d --no-deps postgres
 
     if ($LASTEXITCODE -ne 0) {
-        throw "Falha ao iniciar infraestrutura CDC."
+        throw "Falha ao iniciar PostgreSQL."
+    }
+
+    Wait-ContainerHealthy `
+        -ContainerName "demandflow-postgres" `
+        -ServiceName "PostgreSQL" `
+        -Attempts 30
+
+    Write-Host "Iniciando Kafka após PostgreSQL estar saudável..."
+
+    & docker compose `
+        --profile cdc `
+        up -d --no-deps kafka
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "Falha ao iniciar Kafka."
+    }
+
+    Wait-ContainerHealthy `
+        -ContainerName "demandflow-kafka" `
+        -ServiceName "Kafka"
+
+    Write-Host "Iniciando Debezium após Kafka estar saudável..."
+
+    & docker compose `
+        --profile cdc `
+        up -d --no-deps debezium
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "Falha ao iniciar Debezium."
     }
 
     Write-Host "Aguardando Kafka Connect..."
 
     $ready = $false
 
-    for ($i = 1; $i -le 60; $i++) {
+    # Nesta máquina local, a recuperação dos tópicos internos já levou 124 s.
+    # A janela de 180 s evita um falso timeout sem aumentar CPU ou memória.
+    for ($i = 1; $i -le 90; $i++) {
         try {
             Invoke-RestMethod `
                 -Uri "$connectUrl/connector-plugins" `
@@ -194,5 +276,8 @@ try {
     Write-Host "Status: RUNNING"
 }
 finally {
+    $body = $null
+    $payload = $null
+    $cdcPassword = $null
     Pop-Location
 }
