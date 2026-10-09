@@ -7,7 +7,7 @@ WORKDIR /opt/demandflow
 COPY src/spark /opt/demandflow/src/spark
 COPY config/tables.json /opt/demandflow/config/tables.json
 
-RUN mkdir -p /tmp/.ivy2 \
-    && chown -R spark:spark /opt/demandflow /tmp/.ivy2
+RUN mkdir -p /opt/demandflow/.ivy2 \
+    && chown -R spark:spark /opt/demandflow
 
 USER spark
