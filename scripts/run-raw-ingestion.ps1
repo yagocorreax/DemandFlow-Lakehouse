@@ -31,19 +31,7 @@ try {
     Write-Host ""
     Write-Host "Executando ingestão Kafka -> Raw..."
 
-    docker compose `
-        --profile processing `
-        --profile cdc `
-        run `
-        --rm `
-        spark `
-        /opt/spark/bin/spark-submit `
-        --master "local[2]" `
-        --driver-memory "1g" `
-        --packages `
-        "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.9,org.apache.hadoop:hadoop-aws:3.3.4" `
-        --conf "spark.jars.ivy=/tmp/.ivy2" `
-        /opt/demandflow/src/spark/raw/kafka_to_raw.py
+    & "$PSScriptRoot\invoke-raw-spark.ps1"
 
     if ($LASTEXITCODE -ne 0) {
         throw "A ingestão Raw falhou."
