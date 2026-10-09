@@ -172,6 +172,7 @@ services:
     volumes:
       - ./src/spark:/opt/demandflow/src/spark:ro
       - ./config/tables.json:/opt/demandflow/config/tables.json:ro
+      - demandflow_spark_ivy_cache:/opt/demandflow/.ivy2
 
     mem_limit: 3g
     cpus: "2.0"
@@ -556,6 +557,8 @@ volumes:
   demandflow_hive_metastore_data:
   demandflow_kafka_data:
   demandflow_minio_data:
+  demandflow_spark_ivy_cache:
+    name: demandflow_spark_ivy_cache
   # Legacy volume retained for rollback; no service writes to it.
   demandflow_localstack_data:
   demandflow_superset_home:
