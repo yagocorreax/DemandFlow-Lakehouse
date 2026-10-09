@@ -216,6 +216,74 @@ class StorageMigrationTest(unittest.TestCase):
         self.assertIn(r"\getenv cdc_user DEBEZIUM_POSTGRES_USER", setup_sql)
         self.assertIn(r"\getenv database_name POSTGRES_DATABASE", setup_sql)
 
+    def test_cdc_runtime_flow_is_sequential_reproducible_and_cleanup_safe(self):
+        register = read("scripts/register-debezium-connector.ps1")
+        validator = read("scripts/validate-cdc.ps1")
+        generator = read("src/generator/main.py")
+        raw = read("scripts/run-raw-ingestion.ps1")
+        rebuild = read("scripts/run-lakehouse-rebuild.ps1")
+
+        postgres_start = register.index("up -d --no-deps postgres")
+        kafka_start = register.index("up -d --no-deps kafka")
+        debezium_start = register.index("up -d --no-deps debezium")
+        self.assertLess(postgres_start, kafka_start)
+        self.assertLess(kafka_start, debezium_start)
+        self.assertIn('Wait-ContainerHealthy', register)
+        self.assertIn('localhost", "127.0.0.1", "::1', register)
+        self.assertIn("$connectUri.Port -ne 8083", register)
+        self.assertIn("$i -le 90", register)
+        self.assertIn(
+            '$connectUrl = "http://127.0.0.1:8083"',
+            register,
+        )
+        self.assertNotRegex(
+            register,
+            r"(?i)Write-(?:Host|Output)[^\n]*cdcPassword",
+        )
+
+        self.assertIn('ExpectedOperations @("c", "u", "d")', validator)
+        self.assertIn('ExpectedOperations @("c", "d")', validator)
+        self.assertIn(
+            '$wrappedPayload = Get-RecordProperty $message "payload"',
+            validator,
+        )
+        self.assertIn(
+            "REPLICA IDENTITY DEFAULT não garante pré-imagem em UPDATE",
+            validator,
+        )
+        self.assertIn('demandflow-connect-offsets', validator)
+        self.assertIn('Wait-SlotState "inactive"', validator)
+        self.assertIn('Wait-SlotState "active"', validator)
+        self.assertIn("[int]$Attempts = 90", validator)
+        self.assertIn("[int]$Attempts = 45", validator)
+        self.assertIn('--action sale', validator)
+        self.assertIn('@("debezium", "kafka", "postgres")', validator)
+        self.assertIn(
+            '$connectUrl = "http://127.0.0.1:8083"',
+            validator,
+        )
+        self.assertNotIn("DEBEZIUM_POSTGRES_PASSWORD", validator)
+
+        self.assertIn('"--action"', generator)
+        self.assertIn('"--seed"', generator)
+        self.assertIn('"sale": create_sale', generator)
+        self.assertIn("random.seed(random_seed)", generator)
+
+        self.assertLess(
+            raw.index("docker compose stop -t 30 minio"),
+            raw.index("configure-postgres-cdc.ps1"),
+        )
+        self.assertLess(
+            raw.index("configure-postgres-cdc.ps1"),
+            raw.index("start-storage.ps1"),
+        )
+        self.assertLess(
+            raw.index("start-storage.ps1"),
+            raw.index("register-debezium-connector.ps1"),
+        )
+        self.assertNotIn("--profile cdc up -d", rebuild)
+        self.assertNotIn("start-storage.ps1", rebuild)
+
     def test_consumers_share_external_pipeline_credentials(self):
         expected_file = self.config["secrets"]["s3_credentials"]["file"]
         consumers = ["spark", "hive-metastore", "trino"] + [
