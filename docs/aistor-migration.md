@@ -244,6 +244,61 @@ do contêiner, necessário para `\getenv`, e um administrador do host/Docker pod
 inspecionar processos. A melhoria elimina a exposição em argumentos e saída,
 mas não transforma o ambiente local em um cofre de segredos.
 
+### Validação funcional CDC em 08/10/2026
+
+`scripts/validate-cdc.ps1` executou o caminho PostgreSQL → Debezium → Kafka e
+Generator de forma isolada. PostgreSQL, Kafka e Debezium foram iniciados nessa
+ordem, sempre aguardando o healthcheck anterior; MinIO, Spark, Hive, Trino,
+Superset e Airflow permaneceram parados.
+
+O teste comprovou:
+
+- conector e task Debezium em `RUNNING`, com a senha mascarada nos logs;
+- eventos de criação, atualização e exclusão, na ordem `c,u,d`, correlacionados
+  pela chave primária e contendo LSN de origem;
+- leitura dos dois formatos aceitos pela Bronze: envelope direto e o formato
+  versionado com `schema`/`payload` encontrado no tópico persistente;
+- contrato de `REPLICA IDENTITY DEFAULT`: o estado novo do `UPDATE` é completo,
+  mas a pré-imagem não é obrigatória; o `DELETE` preserva a chave necessária;
+- parada somente do Debezium, escrita no PostgreSQL durante a indisponibilidade
+  e retomada posterior sem repetir snapshot;
+- slot lógico inativo durante a parada e ativo após a retomada;
+- avanço do tópico interno `demandflow-connect-offsets` e do LSN confirmado;
+- uma venda determinística pelo Generator refletida em `orders`, `order_items`,
+  `inventory` e `inventory_movements`.
+
+O Generator ganhou `--action` para selecionar uma operação e `--seed` para
+reproduzir sua aleatoriedade sem alterar o comportamento ponderado padrão. Uma
+venda sintética válida permaneceu no banco para alimentar o próximo teste Raw;
+os registros temporários usados para `c/u/d` e reinício foram excluídos e suas
+exclusões chegaram ao Kafka.
+
+Na máquina local, a recuperação dos tópicos internos do Kafka Connect chegou a
+124 segundos sem OOM. A janela foi ajustada para 180 segundos, sem aumentar CPU
+ou memória. O acesso do host foi canonicalizado para `127.0.0.1`, coerente com
+o bind IPv4 do Compose e sem a resolução intermitente de `localhost` para
+`::1` no Windows.
+
+`run-raw-ingestion.ps1` e `run-lakehouse-rebuild.ps1` também foram reordenados:
+o armazenamento é parado sem remover o volume, a configuração PostgreSQL roda
+isolada e somente então MinIO e CDC são iniciados. Isso elimina chamadas que
+violavam o isolamento introduzido no bloco anterior.
+
+Riscos residuais conhecidos:
+
+- o log do Debezium recomenda `heartbeat.action.query`; sem uma escrita de
+  heartbeat no banco, workloads de baixa atividade podem reter WAL por mais
+  tempo. A correção exige tabela/consulta dedicada e deve ser medida para não
+  gerar escrita desnecessária nesta máquina;
+- Kafka Connect precisa persistir a configuração do conector no volume Kafka.
+  Um administrador do host/Docker continua capaz de acessar material sensível;
+  um `ConfigProvider` baseado em arquivo externo reduziria esse risco;
+- o tráfego Kafka/Connect continua sem TLS dentro da rede Docker local. As
+  portas publicadas permanecem vinculadas ao loopback, não à rede externa.
+
+Ao final, Debezium, Kafka e PostgreSQL foram parados individualmente e nenhum
+serviço do projeto permaneceu ativo.
+
 O Docker Scout está instalado, mas recusou a análise sem login no Docker ID.
 Trivy, Grype e OSV Scanner não estão instalados. Portanto, a ausência de um
 inventário de CVEs continua sendo uma limitação conhecida; não deve ser
@@ -313,7 +368,7 @@ Não usar `docker compose down -v`: isso excluiria volumes persistentes.
 ## Validação estática
 
 ```powershell
-docker compose --profile processing --profile query --profile orchestration config --quiet
+docker compose --profile cdc --profile processing --profile query --profile orchestration config --quiet
 .venv\Scripts\python.exe -B -m unittest discover -s tests -p test_storage_migration.py -v
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/validate-static-syntax.ps1
 git diff --check
@@ -321,10 +376,10 @@ git diff --check
 
 Resultado atual:
 
-- doze testes de consistência passaram, incluindo isolamento da imagem Spark,
+- treze testes de consistência passaram, incluindo isolamento da imagem Spark,
   preservação dos componentes Generator/CDC, injeção segura e configuração
-  PostgreSQL sem senha em argumentos;
-- 20 scripts PowerShell passaram pelo parser sem execução operacional;
+  PostgreSQL sem senha em argumentos e o contrato do validador CDC;
+- 21 scripts PowerShell passaram pelo parser sem execução operacional;
 - scripts shell passaram em `sh -n`;
 - Compose completo e `git diff --check` passaram;
 - arquivos de licença e credenciais estão ignorados pelo Git e pelo contexto de
@@ -353,19 +408,18 @@ mas não são consumidas pela configuração atual.
 
 Cada bloco exige nova autorização e termina com os serviços parados:
 
-1. validar o CDC funcional com PostgreSQL, Kafka, Debezium e Generator:
-   insert/update/delete, payload, offsets e reinício;
-2. avaliar o cache Ivy e validar Raw → Bronze → Silver → Gold, dividindo o
+1. avaliar o cache Ivy e validar Raw → Bronze → Silver → Gold, dividindo o
    processamento em dois blocos se a pressão local exigir;
-3. validar Hive Metastore, Trino e Superset sobre os dados Gold;
-4. validar o DAG Airflow ponta a ponta, repetibilidade e retomada;
-5. executar a auditoria final de segurança/desempenho, inventário de CVEs na
+2. validar Hive Metastore, Trino e Superset sobre os dados Gold;
+3. validar o DAG Airflow ponta a ponta, repetibilidade e retomada;
+4. executar a auditoria final de segurança/desempenho, incluindo heartbeat e
+   `ConfigProvider` do CDC, inventário de CVEs na
    medida em que uma ferramenta estiver disponível, documentação e checklist
    de entrega.
 
-Esses são cinco blocos principais restantes. Pelas limitações da máquina, o
-segundo pode virar dois ou três blocos operacionais; portanto, a projeção é de
-cinco blocos macro ou seis a sete execuções controladas após este ponto.
+Esses são quatro blocos principais restantes. Pelas limitações da máquina, o
+primeiro pode virar dois ou três blocos operacionais; portanto, a projeção é de
+quatro blocos macro ou cinco a seis execuções controladas após este ponto.
 
 ## Referências oficiais
 
