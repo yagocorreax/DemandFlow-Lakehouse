@@ -138,6 +138,14 @@ try {
         -ContainerName "demandflow-kafka" `
         -ServiceName "Kafka"
 
+    Write-Host "Protegendo os tópicos CDC antes de iniciar Debezium..."
+
+    & "$PSScriptRoot\configure-kafka-cdc-topics.ps1"
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "Falha ao configurar os tópicos Kafka do CDC."
+    }
+
     Write-Host "Iniciando Debezium após Kafka estar saudável..."
 
     & docker compose `
