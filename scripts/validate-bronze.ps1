@@ -19,7 +19,7 @@ try {
         --driver-memory "1g" `
         --packages `
         "io.delta:delta-spark_2.12:3.3.2,org.apache.hadoop:hadoop-aws:3.3.4" `
-        --conf "spark.jars.ivy=/tmp/.ivy2" `
+        --conf "spark.jars.ivy=/opt/demandflow/.ivy2" `
         /opt/demandflow/src/spark/bronze/validate_bronze.py
 
     if ($LASTEXITCODE -ne 0) {
