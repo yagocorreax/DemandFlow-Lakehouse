@@ -325,11 +325,73 @@ No pico observado, Spark utilizou aproximadamente 1,92 GiB dos 3 GiB permitidos
 e saturou o limite de 2 CPUs; AIStor utilizou aproximadamente 447 MiB de 1 GiB e
 menos de 1% de CPU. Não ocorreu OOM nem sinal de sobrecarga fora dos limites.
 
-A primeira execução baixou seis artefatos Maven, cerca de 283 MB, para
-`/tmp/.ivy2` dentro do contêiner temporário. Esse cache é descartado por `--rm`,
-então execuções futuras repetem rede e escrita em disco. Persistir um cache Ivy
-dedicado pode reduzir tempo e tráfego, mas precisa de um bloco próprio para
-definir permissões, escopo e limpeza sem compartilhar credenciais.
+A primeira execução original baixou seis artefatos Maven, cerca de 283 MB, para
+um diretório temporário. Os jobs Spark agora compartilham o volume nomeado
+`demandflow_spark_ivy_cache`, montado em `/opt/demandflow/.ivy2`, inclusive
+quando são criados pelo Airflow. O diretório nasce pertencendo ao usuário
+não-root `spark`; o volume contém apenas artefatos públicos do Ivy/Maven e não
+recebe credenciais. O cache sobrevive aos contêineres executados com `--rm` e só
+é removido por uma operação explícita sobre volumes.
+
+### Cache Ivy persistente e validação Kafka → Raw em 09/10/2026
+
+Todos os scripts Spark e os contêineres criados pelo Airflow passaram a usar o
+mesmo volume Ivy. A imagem prepara `/opt/demandflow/.ivy2` para o usuário
+não-root `spark`; um teste dentro de um contêiner efêmero confirmou permissão de
+escrita e encontrou os JARs Kafka e Hadoop esperados.
+
+O primeiro consumo funcional retirou 18 eventos ainda persistidos no Kafka e os
+gravou em `s3a://demandflow-raw/postgres`. Entre eles estavam a venda sintética
+do Generator nos quatro tópicos transacionais e os eventos de promoções usados
+nas validações anteriores. A leitura dos Parquets comprovou o transporte e a
+idempotência:
+
+- 18 `event_id` distintos, sem duplicação;
+- identidade coerente com tópico, partição e offset;
+- operações e tipos de carga válidos;
+- checkpoint presente em `demandflow-checkpoints`;
+- eventos `c`, `u` e `d`, incluindo `orders`, `order_items`, `inventory` e
+  `inventory_movements`.
+
+Duas execuções posteriores com o mesmo checkpoint publicaram
+`RAW_INPUT_ROWS_TOTAL=0`; a contagem física permaneceu em 18. O inventário do
+cache permaneceu idêntico, com 111 arquivos. A resolução inicial dos 14
+artefatos consumiu aproximadamente 82 segundos de download; com o volume
+persistente, o Ivy informou zero artefatos baixados e cerca de 24–28 ms na fase
+de artefatos.
+
+Uma auditoria de completude posterior encontrou uma lacuna crítica. A origem
+contém 461 linhas atuais: 3 lojas, 6 produtos, 2 promoções, 48 pedidos, 48 itens,
+18 estoques, 84 movimentos e 252 previsões. Nos tópicos `stores`, `products` e
+`demand_forecasts`, o offset inicial do log já é igual ao final; não resta
+mensagem disponível. Nos demais tópicos restam exatamente os 18 eventos lidos
+pela Raw. Isso comprova que os segmentos do snapshot inicial já haviam saído da
+retenção antes do primeiro consumo Raw.
+
+`startingOffsets=earliest` não detecta essa perda na primeira execução: sem um
+checkpoint anterior, o Spark não sabe que existiram offsets menores. Por isso,
+`failOnDataLoss=true` também não acusou a lacuna. Transporte correto não
+significava base completa, e a Bronze ficaria sem lojas, produtos, previsões e
+grande parte do estado transacional.
+
+O validador foi tornado fail-closed: agora exige as cardinalidades mínimas de
+snapshot (`op=r`) das cinco tabelas preenchidas pelo seed e orienta recuperar o
+snapshot antes da Bronze. Portanto, o resultado atual é: cache, transporte,
+checkpoint, unicidade e repetição aprovados; completude Raw reprovada até a
+recuperação controlada do snapshot.
+
+`scripts/validate-raw-pipeline.ps1` continua exigindo isolamento inicial e para
+Debezium, Kafka, PostgreSQL e AIStor no `finally`. Uma tentativa anterior tratou
+uma mensagem informativa do Compose em `stderr` como erro do Windows PowerShell;
+a captura foi restringida ao `stdout`, onde ficam as métricas. Em todas as
+tentativas e no diagnóstico final os serviços foram parados. Nenhum offset,
+tópico, objeto ou dado de origem foi excluído ou resetado.
+
+O volume é estado compartilhado e gravável pelos jobs Spark. Em um ambiente
+com autores de jobs não confiáveis, isso permitiria envenenamento do cache; a
+alternativa mais forte seria incorporar JARs verificados por hash à imagem.
+Neste ambiente local de um único operador, o volume troca essa superfície
+residual por menos rede, escrita e tempo de CPU em cada execução.
 
 ## Operação isolada
 
@@ -376,10 +438,11 @@ git diff --check
 
 Resultado atual:
 
-- treze testes de consistência passaram, incluindo isolamento da imagem Spark,
+- quatorze testes de consistência passaram, incluindo isolamento da imagem Spark,
   preservação dos componentes Generator/CDC, injeção segura e configuração
-  PostgreSQL sem senha em argumentos e o contrato do validador CDC;
-- 21 scripts PowerShell passaram pelo parser sem execução operacional;
+  PostgreSQL sem senha em argumentos, o contrato do validador CDC e a
+  idempotência Kafka → Raw;
+- 23 scripts PowerShell passaram pelo parser sem execução operacional;
 - scripts shell passaram em `sh -n`;
 - Compose completo e `git diff --check` passaram;
 - arquivos de licença e credenciais estão ignorados pelo Git e pelo contexto de
@@ -408,18 +471,21 @@ mas não são consumidas pela configuração atual.
 
 Cada bloco exige nova autorização e termina com os serviços parados:
 
-1. avaliar o cache Ivy e validar Raw → Bronze → Silver → Gold, dividindo o
-   processamento em dois blocos se a pressão local exigir;
-2. validar Hive Metastore, Trino e Superset sobre os dados Gold;
-3. validar o DAG Airflow ponta a ponta, repetibilidade e retomada;
-4. executar a auditoria final de segurança/desempenho, incluindo heartbeat e
+1. recuperar o snapshot Raw sem apagar tópicos ou dados, validar a base completa
+   e definir retenção Kafka compatível com a operação local;
+2. validar a transformação Raw → Bronze e sua repetibilidade;
+3. validar Bronze → Silver, qualidade e quarentena;
+4. validar Silver → Gold e suas métricas de negócio;
+5. validar Hive Metastore, Trino e Superset sobre os dados Gold;
+6. validar o DAG Airflow ponta a ponta, repetibilidade e retomada;
+7. executar a auditoria final de segurança/desempenho, incluindo heartbeat e
    `ConfigProvider` do CDC, inventário de CVEs na
    medida em que uma ferramenta estiver disponível, documentação e checklist
    de entrega.
 
-Esses são quatro blocos principais restantes. Pelas limitações da máquina, o
-primeiro pode virar dois ou três blocos operacionais; portanto, a projeção é de
-quatro blocos macro ou cinco a seis execuções controladas após este ponto.
+Esses são sete blocos controlados restantes. A separação das três camadas Spark
+é intencional para limitar CPU e memória; falhas que exijam correção e nova
+execução podem acrescentar tentativas, mas não novos blocos planejados.
 
 ## Referências oficiais
 
