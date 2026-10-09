@@ -91,6 +91,7 @@ class StorageMigrationTest(unittest.TestCase):
             {
                 "/opt/demandflow/src/spark",
                 "/opt/demandflow/config/tables.json",
+                "/opt/demandflow/.ivy2",
             },
         )
         expected_sources = {
@@ -104,6 +105,14 @@ class StorageMigrationTest(unittest.TestCase):
                     Path(mounts[target]["source"]).resolve(),
                     expected_source.resolve(),
                 )
+
+        ivy_mount = mounts["/opt/demandflow/.ivy2"]
+        self.assertEqual(ivy_mount["type"], "volume")
+        self.assertEqual(ivy_mount["source"], "demandflow_spark_ivy_cache")
+        self.assertFalse(ivy_mount.get("read_only", False))
+        self.assertIn("mkdir -p /opt/demandflow/.ivy2", dockerfile)
+        self.assertIn("chown -R spark:spark /opt/demandflow", dockerfile)
+        self.assertNotIn("/tmp/.ivy2", dockerfile)
 
         # Isolation applies only to the Spark image. CDC source components stay
         # present and referenced by their own workflow.
@@ -283,6 +292,68 @@ class StorageMigrationTest(unittest.TestCase):
         )
         self.assertNotIn("--profile cdc up -d", rebuild)
         self.assertNotIn("start-storage.ps1", rebuild)
+
+    def test_raw_pipeline_reuses_ivy_and_proves_checkpoint_idempotency(self):
+        cache_path = "/opt/demandflow/.ivy2"
+        cache_volume = "demandflow_spark_ivy_cache"
+        pipeline = read("airflow/dags/demandflow_pipeline.py")
+        ingestion = read("src/spark/raw/kafka_to_raw.py")
+        raw_validation = read("src/spark/raw/validate_raw.py")
+        runtime_validation = read("scripts/validate-raw-pipeline.ps1")
+        raw_runner = read("scripts/run-raw-ingestion.ps1")
+
+        volume = self.config["volumes"][cache_volume]
+        self.assertEqual(volume["name"], cache_volume)
+
+        self.assertIn("from docker.types import Mount", pipeline)
+        self.assertIn(f'SPARK_IVY_CACHE_PATH = "{cache_path}"', pipeline)
+        self.assertIn(f'SPARK_IVY_CACHE_VOLUME = "{cache_volume}"', pipeline)
+        self.assertIn("mounts=[", pipeline)
+        self.assertIn("source=SPARK_IVY_CACHE_VOLUME", pipeline)
+        self.assertIn("target=SPARK_IVY_CACHE_PATH", pipeline)
+
+        ivy_users = [
+            *ROOT.joinpath("scripts").glob("run-*.ps1"),
+            *ROOT.joinpath("scripts").glob("validate-*.ps1"),
+        ]
+        for path in ivy_users:
+            text = path.read_text(encoding="utf-8-sig")
+            with self.subTest(script=path.name):
+                self.assertNotIn("/tmp/.ivy2", text)
+
+        self.assertIn("RAW_INPUT_ROWS_TOTAL=", ingestion)
+        for marker in (
+            "RAW_EVENT_COUNT=",
+            "RAW_DUPLICATE_EVENT_IDS=0",
+            "RAW_INVALID_IDENTITY_COUNT=0",
+            "RAW_INITIAL_SNAPSHOT_PRESENT=true",
+            "RAW_CHECKPOINT_PRESENT=true",
+        ):
+            self.assertIn(marker, raw_validation)
+
+        self.assertIn("MINIMUM_INITIAL_SNAPSHOT_COUNTS", raw_validation)
+        for table_name in (
+            "stores",
+            "products",
+            "promotions",
+            "inventory",
+            "demand_forecasts",
+        ):
+            self.assertIn(f'"{table_name}"', raw_validation)
+        self.assertIn(
+            "Recupere o snapshot antes de executar a Bronze.",
+            raw_validation,
+        )
+
+        self.assertIn("invoke-raw-spark.ps1", raw_runner)
+        self.assertIn("RAW_INPUT_ROWS_TOTAL=(?<count>[0-9]+)", runtime_validation)
+        self.assertIn("$inputCount -ne 0", runtime_validation)
+        self.assertIn("Compare-Object $cacheBefore $cacheAfter", runtime_validation)
+        self.assertIn("$secondRawCount -ne $firstRawCount", runtime_validation)
+        self.assertIn(
+            '@("debezium", "kafka", "postgres", "minio")',
+            runtime_validation,
+        )
 
     def test_consumers_share_external_pipeline_credentials(self):
         expected_file = self.config["secrets"]["s3_credentials"]["file"]
