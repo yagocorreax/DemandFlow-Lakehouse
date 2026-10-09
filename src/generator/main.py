@@ -17,6 +17,15 @@ ENV_FILE = PROJECT_ROOT / ".env"
 load_dotenv(ENV_FILE)
 
 
+ACTION_NAMES = (
+    "sale",
+    "replenish",
+    "price",
+    "cancel",
+    "forecast",
+)
+
+
 def get_required_env(name: str) -> str:
     value = os.getenv(name)
 
@@ -397,8 +406,20 @@ def update_forecast(connection: Connection) -> None:
 def run_generator(
     iterations: int,
     interval_seconds: float,
+    action_name: str | None = None,
+    random_seed: int | None = None,
 ) -> None:
-    actions: list[Callable[[Connection], None]] = [
+    if random_seed is not None:
+        random.seed(random_seed)
+
+    actions_by_name: dict[str, Callable[[Connection], None]] = {
+        "sale": create_sale,
+        "replenish": replenish_stock,
+        "price": update_product_price,
+        "cancel": cancel_order,
+        "forecast": update_forecast,
+    }
+    weighted_actions: list[Callable[[Connection], None]] = [
         create_sale,
         create_sale,
         create_sale,
@@ -408,6 +429,11 @@ def run_generator(
         update_forecast,
         update_forecast,
     ]
+
+    if action_name is None:
+        actions = weighted_actions
+    else:
+        actions = [actions_by_name[action_name]]
 
     with create_connection() as connection:
         print("Conexão com o PostgreSQL realizada.")
@@ -451,6 +477,21 @@ def parse_arguments() -> argparse.Namespace:
         help="Intervalo entre as operações.",
     )
 
+    parser.add_argument(
+        "--action",
+        choices=ACTION_NAMES,
+        help=(
+            "Executa somente a ação indicada; quando omitido, preserva "
+            "a seleção aleatória ponderada."
+        ),
+    )
+
+    parser.add_argument(
+        "--seed",
+        type=int,
+        help="Semente opcional para reproduzir a seleção aleatória.",
+    )
+
     arguments = parser.parse_args()
 
     if arguments.iterations < 1:
@@ -468,6 +509,8 @@ def main() -> None:
     run_generator(
         iterations=arguments.iterations,
         interval_seconds=arguments.interval_seconds,
+        action_name=arguments.action,
+        random_seed=arguments.seed,
     )
 
 
