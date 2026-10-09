@@ -20,6 +20,10 @@
     "decimal.handling.mode": "string",
     "tombstones.on.delete": "false",
     "heartbeat.interval.ms": "10000",
+    "signal.enabled.channels": "kafka",
+    "signal.kafka.topic": "demandflow-signal",
+    "signal.kafka.bootstrap.servers": "kafka:29092",
+    "message.prefix.exclude.list": "demandflow-snapshot-resume",
     "topic.creation.default.replication.factor": "1",
     "topic.creation.default.partitions": "3"
   }
