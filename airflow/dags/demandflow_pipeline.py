@@ -5,6 +5,7 @@ import pendulum
 
 from airflow.sdk import DAG
 from airflow.providers.docker.operators.docker import DockerOperator
+from docker.types import Mount
 
 
 
@@ -13,6 +14,10 @@ DOCKER_NETWORK = os.environ["DEMANDFLOW_DOCKER_NETWORK"]
 SPARK_IMAGE = "demandflow-spark:3.5.9"
 
 DOCKER_URL = "unix://var/run/docker.sock"
+
+SPARK_IVY_CACHE_PATH = "/opt/demandflow/.ivy2"
+
+SPARK_IVY_CACHE_VOLUME = "demandflow_spark_ivy_cache"
 
 
 SPARK_PACKAGES = ",".join(
@@ -99,7 +104,7 @@ def spark_task(
             SPARK_PACKAGES,
 
             "--conf",
-            "spark.jars.ivy=/tmp/.ivy2",
+            f"spark.jars.ivy={SPARK_IVY_CACHE_PATH}",
 
             script_path,
         ],
@@ -113,6 +118,14 @@ def spark_task(
         docker_url=DOCKER_URL,
 
         network_mode=DOCKER_NETWORK,
+
+        mounts=[
+            Mount(
+                source=SPARK_IVY_CACHE_VOLUME,
+                target=SPARK_IVY_CACHE_PATH,
+                type="volume",
+            ),
+        ],
 
         auto_remove="success",
 
