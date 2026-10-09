@@ -89,7 +89,7 @@ def create_spark_session() -> SparkSession:
     )
 
 
-def validate_initial_snapshot(raw: DataFrame) -> None:
+def validate_initial_snapshot(raw: DataFrame) -> dict[str, int]:
     with CONFIG_PATH.open(
         "r",
         encoding="utf-8-sig",
@@ -132,6 +132,11 @@ def validate_initial_snapshot(raw: DataFrame) -> None:
             + ", ".join(insufficient)
             + ". Recupere o snapshot antes de executar a Bronze."
         )
+
+    return {
+        table_name: snapshot_counts.get(table_name, 0)
+        for table_name in sorted(configured_tables)
+    }
 
 
 def main() -> None:
@@ -212,7 +217,7 @@ def main() -> None:
                 "com identidade ou metadados CDC inválidos."
             )
 
-        validate_initial_snapshot(raw)
+        snapshot_counts = validate_initial_snapshot(raw)
 
         checkpoint_path = get_required_env("RAW_CHECKPOINT_PATH")
         hadoop_path = spark._jvm.org.apache.hadoop.fs.Path(checkpoint_path)
@@ -232,6 +237,12 @@ def main() -> None:
         print("RAW_INVALID_IDENTITY_COUNT=0")
         print("RAW_INITIAL_SNAPSHOT_PRESENT=true")
         print("RAW_CHECKPOINT_PRESENT=true")
+        print(
+            "RAW_SNAPSHOT_EVENT_COUNT="
+            f"{sum(snapshot_counts.values())}"
+        )
+        for table_name, count in snapshot_counts.items():
+            print(f"RAW_SNAPSHOT_COUNT_{table_name}={count}")
 
         print("")
         print("Eventos por tabela e tipo:")
