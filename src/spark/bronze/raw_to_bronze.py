@@ -373,28 +373,25 @@ def write_bronze_events(
     )
 
 
-def build_current_records(
-    new_events: DataFrame,
-    primary_key: list[str],
+def flatten_event_records(
+    events: DataFrame,
     columns: dict,
 ) -> DataFrame:
     selected_columns = []
 
     for column_name in columns:
         selected_columns.append(
-            F.coalesce(
-                F.col(
-                    f"after.{column_name}"
-                ),
-                F.col(
-                    f"before.{column_name}"
-                ),
+            F.when(
+                F.col("operation") == "d",
+                F.col(f"before.{column_name}"),
+            ).otherwise(
+                F.col(f"after.{column_name}"),
             ).alias(
                 column_name
             )
         )
 
-    records = new_events.select(
+    return events.select(
         *selected_columns,
 
         F.col("operation").alias(
@@ -430,6 +427,12 @@ def build_current_records(
         ),
     )
 
+
+def validate_record_primary_keys(
+    records: DataFrame,
+    primary_key: list[str],
+) -> None:
+
     missing_pk = None
 
     for key in primary_key:
@@ -453,6 +456,16 @@ def build_current_records(
             f"{invalid_count} eventos possuem "
             "chave primária nula."
         )
+
+
+def select_latest_records(
+    records: DataFrame,
+    primary_key: list[str],
+) -> DataFrame:
+    validate_record_primary_keys(
+        records=records,
+        primary_key=primary_key,
+    )
 
     window = (
         Window
@@ -489,6 +502,91 @@ def build_current_records(
         )
         .drop("_row_number")
     )
+
+
+def build_current_records(
+    events: DataFrame,
+    primary_key: list[str],
+    columns: dict,
+) -> DataFrame:
+    records = flatten_event_records(
+        events=events,
+        columns=columns,
+    )
+
+    return select_latest_records(
+        records=records,
+        primary_key=primary_key,
+    )
+
+
+def build_affected_current_records(
+    all_events: DataFrame,
+    new_events: DataFrame,
+    primary_key: list[str],
+    columns: dict,
+) -> DataFrame:
+    new_records = flatten_event_records(
+        events=new_events,
+        columns=columns,
+    )
+    validate_record_primary_keys(
+        records=new_records,
+        primary_key=primary_key,
+    )
+
+    affected_keys = (
+        new_records
+        .select(*primary_key)
+        .dropDuplicates(primary_key)
+    )
+    historical_records = flatten_event_records(
+        events=all_events,
+        columns=columns,
+    )
+    affected_history = historical_records.join(
+        F.broadcast(affected_keys),
+        on=primary_key,
+        how="inner",
+    )
+
+    return select_latest_records(
+        records=affected_history,
+        primary_key=primary_key,
+    )
+
+
+def build_source_is_newer_condition() -> str:
+    """Compare the complete CDC ordering tuple used by the window above."""
+
+    ordering_columns = [
+        "_source_lsn",
+        "_kafka_timestamp",
+        "_kafka_partition",
+        "_kafka_offset",
+    ]
+
+    equal_prefix = []
+    newer_terms = []
+
+    for column_name in ordering_columns:
+        source = f"source.{column_name}"
+        target = f"target.{column_name}"
+        greater = (
+            f"(({source} IS NOT NULL AND {target} IS NULL) "
+            f"OR {source} > {target})"
+        )
+
+        if equal_prefix:
+            newer_terms.append(
+                "(" + " AND ".join(equal_prefix) + f" AND {greater})"
+            )
+        else:
+            newer_terms.append(greater)
+
+        equal_prefix.append(f"({source} <=> {target})")
+
+    return "(" + " OR ".join(newer_terms) + ")"
 
 
 def merge_current(
@@ -535,6 +633,7 @@ def merge_current(
             for key in primary_key
         ]
     )
+    source_is_newer = build_source_is_newer_condition()
 
     (
         target.alias("target")
@@ -544,12 +643,14 @@ def merge_current(
         )
         .whenMatchedDelete(
             condition=(
-                "source._operation = 'd'"
+                "source._operation = 'd' AND "
+                f"{source_is_newer}"
             )
         )
         .whenMatchedUpdateAll(
             condition=(
-                "source._operation <> 'd'"
+                "source._operation <> 'd' AND "
+                f"{source_is_newer}"
             )
         )
         .whenNotMatchedInsertAll(
@@ -597,6 +698,9 @@ def process_tabledef(
 
     print(
         f"Novos eventos encontrados: {new_count}"
+    )
+    print(
+        f"BRONZE_NEW_EVENTS_{table_name}={new_count}"
     )
 
     try:
@@ -653,7 +757,7 @@ def process_tabledef(
                 return
 
             current_records = build_current_records(
-                new_events=all_events,
+                events=all_events,
                 primary_key=configuration[
                     "primary_key"
                 ],
@@ -689,7 +793,13 @@ def process_tabledef(
         #
         # 5. Current existe e chegaram novos eventos.
         #
-        current_records = build_current_records(
+        all_events = (
+            spark.read
+            .format("delta")
+            .load(events_path)
+        )
+        current_records = build_affected_current_records(
+            all_events=all_events,
             new_events=new_events,
             primary_key=configuration[
                 "primary_key"
