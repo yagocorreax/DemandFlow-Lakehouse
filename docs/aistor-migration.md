@@ -376,9 +376,9 @@ grande parte do estado transacional.
 
 O validador foi tornado fail-closed: agora exige as cardinalidades mínimas de
 snapshot (`op=r`) das cinco tabelas preenchidas pelo seed e orienta recuperar o
-snapshot antes da Bronze. Portanto, o resultado atual é: cache, transporte,
+snapshot antes da Bronze. Naquele momento, o resultado foi: cache, transporte,
 checkpoint, unicidade e repetição aprovados; completude Raw reprovada até a
-recuperação controlada do snapshot.
+recuperação controlada descrita a seguir.
 
 `scripts/validate-raw-pipeline.ps1` continua exigindo isolamento inicial e para
 Debezium, Kafka, PostgreSQL e AIStor no `finally`. Uma tentativa anterior tratou
@@ -392,6 +392,79 @@ com autores de jobs não confiáveis, isso permitiria envenenamento do cache; a
 alternativa mais forte seria incorporar JARs verificados por hash à imagem.
 Neste ambiente local de um único operador, o volume troca essa superfície
 residual por menos rede, escrita e tempo de CPU em cada execução.
+
+### Recuperação controlada do snapshot Raw em 09/10/2026
+
+O Debezium permaneceu em `snapshot.mode=initial`; offsets, tópicos e dados de
+origem não foram apagados ou resetados. O connector passou a aceitar sinais
+Kafka no tópico dedicado `demandflow-signal`, validado com exatamente uma
+partição. Um sinal `execute-snapshot` do tipo `blocking` solicitou as oito
+tabelas explicitamente.
+
+Os oito tópicos `demandflow.public.*` são criados/validados antes do Debezium e
+receberam configuração dinâmica `retention.ms=-1` e `retention.bytes=-1`. A
+retenção ilimitada não foi aplicada globalmente ao broker nem aos tópicos
+internos. Um tópico auxiliar `demandflow.message`, criado quando uma mensagem
+lógica destravou a posição WAL, teve os overrides removidos e voltou à retenção
+padrão. O connector agora exclui o prefixo técnico
+`demandflow-snapshot-resume` para que futuras mensagens desse tipo não sejam
+encaminhadas à Raw.
+
+A origem foi contada imediatamente antes da recuperação:
+
+- `stores=3`;
+- `products=6`;
+- `promotions=2`;
+- `orders=48`;
+- `order_items=48`;
+- `inventory=18`;
+- `inventory_movements=84`;
+- `demand_forecasts=252`;
+- total: 461 linhas.
+
+Sem escrita recente, o streaming do PostgreSQL ficou procurando o LSN salvo e
+o thread do snapshot aguardou a pausa do streaming. Uma chamada
+`pg_logical_emit_message` avançou apenas o WAL lógico, sem modificar tabela ou
+linha, e liberou o snapshot. A rotina permanente faz isso antes de um novo
+sinal. Como a primeira validação conservadora não reconhecia os marcadores
+`first_in_data_collection` e `last_in_data_collection`, ela parou antes de
+iniciar Spark. A retomada reconstruiu o lote já persistido por timestamp,
+partição e intervalo contíguo de offsets, sem publicar um segundo snapshot.
+
+O resultado funcional foi:
+
+- 461 mensagens novas no Kafka, todas `op=r`, com tabela e marcador de snapshot
+  válidos;
+- primeira ingestão no checkpoint existente:
+  `RAW_INPUT_ROWS_TOTAL=461`;
+- Raw final: 479 eventos, compostos pelos 18 CDC anteriores e 461 leituras de
+  snapshot;
+- cardinalidades Raw de snapshot exatamente iguais às oito contagens da fonte;
+- zero `event_id` duplicado e zero identidade/metadado inválido;
+- checkpoint presente;
+- segunda ingestão: `RAW_INPUT_ROWS_TOTAL=0`;
+- segunda leitura física: 479 eventos, sem mudança de contagem;
+- cache Ivy reutilizado com zero artefatos baixados.
+
+O diretório persistente do Kafka passou de 8.772 KiB para 11.032 KiB durante o
+snapshot, aumento de 2.260 KiB. Retenção ilimitada elimina a recorrência da
+perda silenciosa, mas transfere o risco para crescimento de disco; por isso ela
+ficou restrita aos oito tópicos CDC e o uso do volume deve ser acompanhado no
+ambiente local.
+
+`scripts/recover-raw-snapshot.ps1` implementa emissão, validação e retomada
+segura do lote já publicado. `scripts/configure-kafka-cdc-topics.ps1` mantém o
+contrato de partições e retenção. O validador Raw agora publica contagens
+estáveis por tabela e rejeita a execução da Bronze sem snapshot mínimo. Todos
+os serviços foram confirmados parados ao fim do bloco.
+
+Uma nova recuperação exige a intenção explícita `-CreateSnapshot`; executar o
+script sem ação ou combinar criação e retomada é recusado. Isso reduz o risco de
+publicar snapshots sem necessidade. A opção de retomada existe somente para
+concluir com segurança um lote que já tenha sido publicado e validado.
+Após confirmar `CURRENT-OFFSET=1`, `LOG-END-OFFSET=1` e `LAG=0` no grupo
+`kafka-signal`, o template final também foi sincronizado no estado persistente
+do Kafka Connect; a API confirmou somente as propriedades não secretas.
 
 ## Operação isolada
 
@@ -438,11 +511,11 @@ git diff --check
 
 Resultado atual:
 
-- quatorze testes de consistência passaram, incluindo isolamento da imagem Spark,
+- quinze testes de consistência passaram, incluindo isolamento da imagem Spark,
   preservação dos componentes Generator/CDC, injeção segura e configuração
   PostgreSQL sem senha em argumentos, o contrato do validador CDC e a
-  idempotência Kafka → Raw;
-- 23 scripts PowerShell passaram pelo parser sem execução operacional;
+  recuperação/idempotência Kafka → Raw;
+- 25 scripts PowerShell passaram pelo parser sem execução operacional;
 - scripts shell passaram em `sh -n`;
 - Compose completo e `git diff --check` passaram;
 - arquivos de licença e credenciais estão ignorados pelo Git e pelo contexto de
@@ -471,19 +544,17 @@ mas não são consumidas pela configuração atual.
 
 Cada bloco exige nova autorização e termina com os serviços parados:
 
-1. recuperar o snapshot Raw sem apagar tópicos ou dados, validar a base completa
-   e definir retenção Kafka compatível com a operação local;
-2. validar a transformação Raw → Bronze e sua repetibilidade;
-3. validar Bronze → Silver, qualidade e quarentena;
-4. validar Silver → Gold e suas métricas de negócio;
-5. validar Hive Metastore, Trino e Superset sobre os dados Gold;
-6. validar o DAG Airflow ponta a ponta, repetibilidade e retomada;
-7. executar a auditoria final de segurança/desempenho, incluindo heartbeat e
+1. validar a transformação Raw → Bronze e sua repetibilidade;
+2. validar Bronze → Silver, qualidade e quarentena;
+3. validar Silver → Gold e suas métricas de negócio;
+4. validar Hive Metastore, Trino e Superset sobre os dados Gold;
+5. validar o DAG Airflow ponta a ponta, repetibilidade e retomada;
+6. executar a auditoria final de segurança/desempenho, incluindo heartbeat e
    `ConfigProvider` do CDC, inventário de CVEs na
    medida em que uma ferramenta estiver disponível, documentação e checklist
    de entrega.
 
-Esses são sete blocos controlados restantes. A separação das três camadas Spark
+Esses são seis blocos controlados restantes. A separação das três camadas Spark
 é intencional para limitar CPU e memória; falhas que exijam correção e nova
 execução podem acrescentar tentativas, mas não novos blocos planejados.
 
@@ -497,3 +568,5 @@ execução podem acrescentar tentativas, mas não novos blocos planejados.
 - [PostgreSQL 16: restauração de senhas criptografadas de papéis](https://www.postgresql.org/docs/16/sql-createrole.html)
 - [PostgreSQL 16: `psql`, `\getenv` e interpolação segura](https://www.postgresql.org/docs/16/app-psql.html)
 - [PostgreSQL 16: funções de consulta de privilégios](https://www.postgresql.org/docs/16/functions-info.html)
+- [Debezium 3.6: connector PostgreSQL e snapshots ad hoc](https://debezium.io/documentation/reference/3.6/connectors/postgresql.html)
+- [Apache Kafka 4.3: configurações de retenção do broker](https://kafka.apache.org/43/configuration/broker-configs/)
