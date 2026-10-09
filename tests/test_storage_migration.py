@@ -293,6 +293,67 @@ class StorageMigrationTest(unittest.TestCase):
         self.assertNotIn("--profile cdc up -d", rebuild)
         self.assertNotIn("start-storage.ps1", rebuild)
 
+    def test_snapshot_recovery_uses_kafka_signals_and_targeted_retention(self):
+        connector = json.loads(read("config/debezium/postgres-connector.json"))[
+            "config"
+        ]
+        self.assertEqual(connector["snapshot.mode"], "initial")
+        self.assertEqual(connector["signal.enabled.channels"], "kafka")
+        self.assertEqual(connector["signal.kafka.topic"], "demandflow-signal")
+        self.assertEqual(
+            connector["signal.kafka.bootstrap.servers"],
+            "kafka:29092",
+        )
+        self.assertEqual(
+            connector["message.prefix.exclude.list"],
+            "demandflow-snapshot-resume",
+        )
+        self.assertNotIn("topic.creation.default.retention.ms", connector)
+        self.assertNotIn("topic.creation.default.retention.bytes", connector)
+
+        register = read("scripts/register-debezium-connector.ps1")
+        topics = read("scripts/configure-kafka-cdc-topics.ps1")
+        recovery = read("scripts/recover-raw-snapshot.ps1")
+        self.assertLess(
+            register.index("configure-kafka-cdc-topics.ps1"),
+            register.index("up -d --no-deps debezium"),
+        )
+        self.assertIn('"--partitions", "1"', topics)
+        self.assertIn('"retention.ms=-1,retention.bytes=-1"', topics)
+        self.assertIn('"demandflow.message"', topics)
+        self.assertIn('"--delete-config"', topics)
+        expected_topics = {
+            f"demandflow.public.{table}"
+            for table in json.loads(read("config/tables.json"))
+        }
+        configured_topics = set(
+            re.findall(r'"(demandflow[.]public[.][a-z_]+)"', topics)
+        )
+        self.assertEqual(configured_topics, expected_topics)
+
+        self.assertIn('type = "execute-snapshot"', recovery)
+        self.assertIn('type = "blocking"', recovery)
+        self.assertIn('"data-collections" = $collections', recovery)
+        self.assertIn("Advance-LogicalWalForSnapshot", recovery)
+        self.assertIn("pg_logical_emit_message", recovery)
+        self.assertIn("CreateSnapshot", recovery)
+        self.assertIn("ResumePublishedSnapshot", recovery)
+        self.assertIn("Informe exatamente uma ação", recovery)
+        self.assertIn("Find-LatestPublishedSnapshot", recovery)
+        self.assertIn("Assert-NewRecordsAreSnapshotReads", recovery)
+        self.assertIn('$operation -cne "r"', recovery)
+        self.assertIn('"first_in_data_collection"', recovery)
+        self.assertIn('"last_in_data_collection"', recovery)
+        self.assertIn("RAW_SNAPSHOT_RECOVERY_SECOND_INPUT=", recovery)
+        self.assertIn('@("debezium", "kafka", "postgres", "minio")', recovery)
+        for forbidden in (
+            "kafka-topics.sh --delete",
+            "DELETE /connectors",
+            "docker volume rm",
+            "snapshot.mode\" = \"always",
+        ):
+            self.assertNotIn(forbidden, recovery)
+
     def test_raw_pipeline_reuses_ivy_and_proves_checkpoint_idempotency(self):
         cache_path = "/opt/demandflow/.ivy2"
         cache_volume = "demandflow_spark_ivy_cache"
@@ -328,6 +389,8 @@ class StorageMigrationTest(unittest.TestCase):
             "RAW_INVALID_IDENTITY_COUNT=0",
             "RAW_INITIAL_SNAPSHOT_PRESENT=true",
             "RAW_CHECKPOINT_PRESENT=true",
+            "RAW_SNAPSHOT_EVENT_COUNT=",
+            "RAW_SNAPSHOT_COUNT_",
         ):
             self.assertIn(marker, raw_validation)
 
