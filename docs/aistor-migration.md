@@ -517,6 +517,108 @@ repetição, comparação de versões e limpeza. Somente AIStor e um job Spark
 efêmero ficaram ativos por vez; todos os serviços foram confirmados parados no
 final.
 
+### Validação Bronze → Silver em 09/10/2026
+
+A transformação Silver passou a aplicar um contrato explícito por tabela para
+tipos, campos obrigatórios, strings não vazias, enums, chaves primárias e chaves
+únicas. Conversões que transformem um valor não nulo em `NULL` são rejeitadas
+como `INVALID_CAST`; datas Debezium em epoch-day também são convertidas
+corretamente. A precisão de `demand_forecasts.forecast_quantity` foi alinhada à
+origem como `decimal(12,2)`.
+
+As regras de negócio agora cobrem preços, descontos, quantidades, estoque,
+intervalos de promoções, estados e sinais de movimentação. Em particular,
+`OUT` negativo é válido, como definido pelo schema PostgreSQL e pelo Generator;
+`OUT` positivo, `IN`/`RETURN` negativos e quantidade zero são rejeitados.
+Registros inválidos preservam a linha de negócio original em JSON, a lista de
+erros e os metadados Bronze no bucket `demandflow-quarantine`, permitindo
+diagnóstico sem perder o valor que falhou durante um cast.
+
+Silver e Quarantine deixaram de receber `overwrite` a cada execução. O job
+compara o conteúdo em ambas as direções, desconsiderando somente o timestamp da
+validação, não abre transação quando o estado é idêntico e usa `MERGE` Delta
+para alterações reais. A sincronização inclui inserções, atualizações e remoção
+de eventos que deixem de pertencer à saída, mantendo `_event_id` como identidade
+e Change Data Feed habilitado.
+
+A primeira tentativa idempotente expôs uma expansão excessiva do plano lógico:
+o Catalyst permaneceu consumindo CPU na comparação de uma tabela de três linhas.
+O resultado completo das regras passou então a ser materializado uma única vez
+com corte de linhagem antes das comparações exatas, tanto no pipeline quanto no
+validador. Isso preservou os critérios e eliminou a reotimização repetida da
+árvore completa de qualidade. A execução anômala foi interrompida antes de
+qualquer escrita; as transações Delta já confirmadas permaneceram íntegras.
+
+A auditoria independente recomputa a classificação a partir da Bronze e exige:
+
+- schema exato nas oito tabelas Silver e nas oito tabelas Quarantine;
+- igualdade bidirecional de todas as colunas, exceto `_dq_validated_at`;
+- `_event_id` único, chaves de negócio únicas e metadados de diagnóstico;
+- nove relacionamentos sem referências órfãs;
+- CDF ativo e versão Delta estável;
+- seis provas sintéticas para cast decimal, status inválido, sinais de
+  movimentação, campo obrigatório e datas epoch-day.
+
+O resultado foi `461` linhas Bronze, `461` Silver e `0` Quarantine, distribuídas
+como `stores=3`, `products=6`, `promotions=2`, `orders=48`, `order_items=48`,
+`inventory=18`, `inventory_movements=84` e `demand_forecasts=252`. Houve zero
+divergência exata, zero órfão e as seis provas passaram. As 16 tabelas
+permaneceram na versão Delta `0`.
+
+Uma segunda transformação reportou `SILVER_WRITE_APPLIED=false` e
+`QUARANTINE_WRITE_APPLIED=false` para todas as oito tabelas. A validação final
+repetiu as 40 métricas de contagem e versão sem alteração.
+`scripts/validate-silver-pipeline.ps1` automatiza as duas passagens, as duas
+auditorias, a comparação de métricas e a limpeza. Somente AIStor e um job Spark
+efêmero ficaram ativos por vez; todos os serviços foram confirmados parados ao
+final do bloco.
+
+### Validação Silver → Gold em 10/10/2026
+
+A camada Gold passou a materializar quatro contratos determinísticos:
+`daily_sales`, `product_sales`, `inventory_health` e `forecast_accuracy`. Cada
+contrato fixa nomes, ordem e tipos das colunas, campos obrigatórios, chaves e
+restrições de domínio. A sessão Spark opera em UTC e os valores monetários e de
+previsão usam tipos decimais explícitos, evitando variações de fuso ou
+arredondamento entre execuções.
+
+As métricas realizadas de venda agora consideram somente pedidos `PAID`,
+`SHIPPED` e `DELIVERED`. Pedidos `CREATED` ainda não representam receita e
+pedidos `CANCELLED` não podem inflar faturamento, unidades vendidas nem demanda
+real. A porcentagem de erro da previsão também foi corrigida para
+`abs(realizado - previsto) / realizado * 100`; quando o realizado é zero, o
+resultado permanece `NULL`, pois não existe denominador válido. O cálculo
+anterior dividia pelo previsto e distorcia a interpretação do erro.
+
+O antigo `overwrite` incondicional foi substituído por comparação exata e
+sincronização `MERGE` com inserção, atualização e exclusão. O job corta a
+linhagem antes das comparações, não abre transação quando o conteúdo é idêntico
+e mantém Change Data Feed habilitado. Com isso, uma repetição sem mudança não
+gera novos arquivos nem versões Delta e reduz CPU, memória e I/O no ambiente
+local.
+
+O validador independente recompõe as quatro tabelas a partir da Silver e exige
+igualdade bidirecional, schema exato, chaves únicas, campos obrigatórios,
+valores não negativos e versões Delta estáveis. Ele também reconcilia receita
+e pedidos contra `orders`, receita líquida e unidades contra `order_items`, o
+estado completo do estoque e as fórmulas de acurácia. Seis provas sintéticas
+cobrem exclusão de status não realizados, agregações de venda, limites de
+estoque, denominador do erro percentual e o caso de realizado zero.
+
+A execução operacional produziu `13` linhas em `daily_sales`, `6` em
+`product_sales`, `18` em `inventory_health` e `252` em
+`forecast_accuracy`, totalizando `289`. Foram reconciliados `31` pedidos
+realizados, receita total e líquida de `17241.99`, `58` unidades vendidas, `18`
+posições de estoque saudáveis e MAE de previsão `21.9543`. Houve zero
+divergência exata, as reconciliações financeira e de origem passaram, as seis
+provas passaram e as quatro tabelas ficaram na versão Delta `0` com CDF ativo.
+
+Na segunda transformação, as quatro métricas `GOLD_WRITE_APPLIED` foram
+`false`. Uma nova auditoria confirmou as mesmas contagens, métricas de negócio
+e versões. `scripts/validate-gold-pipeline.ps1` automatiza as duas passagens,
+as duas auditorias e a limpeza. Somente AIStor e um job Spark efêmero ficaram
+ativos por vez; todos os serviços foram confirmados parados ao final.
+
 ## Operação isolada
 
 Preparar credenciais uma única vez:
@@ -562,11 +664,13 @@ git diff --check
 
 Resultado atual:
 
-- dezesseis testes de consistência passaram, incluindo isolamento da imagem Spark,
+- dezoito testes de consistência passaram, incluindo isolamento da imagem Spark,
   preservação dos componentes Generator/CDC, injeção segura e configuração
   PostgreSQL sem senha em argumentos, o contrato do validador CDC e a
-  recuperação/idempotência Kafka → Raw e a equivalência/idempotência Bronze;
-- 26 scripts PowerShell passaram pelo parser sem execução operacional;
+  recuperação/idempotência Kafka → Raw, a equivalência/idempotência Bronze e o
+  contrato de qualidade/idempotência Silver, além da reconciliação de métricas
+  e idempotência Gold;
+- 28 scripts PowerShell passaram pelo parser sem execução operacional;
 - scripts shell passaram em `sh -n`;
 - Compose completo e `git diff --check` passaram;
 - arquivos de licença e credenciais estão ignorados pelo Git e pelo contexto de
@@ -595,17 +699,15 @@ mas não são consumidas pela configuração atual.
 
 Cada bloco exige nova autorização e termina com os serviços parados:
 
-1. validar Bronze → Silver, qualidade e quarentena;
-2. validar Silver → Gold e suas métricas de negócio;
-3. validar Hive Metastore, Trino e Superset sobre os dados Gold;
-4. validar o DAG Airflow ponta a ponta, repetibilidade e retomada;
-5. executar a auditoria final de segurança/desempenho, incluindo heartbeat e
+1. validar Hive Metastore, Trino e Superset sobre os dados Gold;
+2. validar o DAG Airflow ponta a ponta, repetibilidade e retomada;
+3. executar a auditoria final de segurança/desempenho, incluindo heartbeat e
    `ConfigProvider` do CDC, inventário de CVEs na
    medida em que uma ferramenta estiver disponível, documentação e checklist
    de entrega.
 
-Esses são cinco blocos controlados restantes. A separação das três camadas Spark
-é intencional para limitar CPU e memória; falhas que exijam correção e nova
+Esses são três blocos controlados restantes. A separação dos componentes é
+intencional para limitar CPU e memória; falhas que exijam correção e nova
 execução podem acrescentar tentativas, mas não novos blocos planejados.
 
 ## Referências oficiais
