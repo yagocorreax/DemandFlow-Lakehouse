@@ -463,6 +463,92 @@ class StorageMigrationTest(unittest.TestCase):
         self.assertIn("--no-deps", runner)
         self.assertIn("--no-deps", validation_runner)
 
+    def test_silver_pipeline_preserves_quality_and_skips_unchanged_writes(self):
+        transform = read("src/spark/silver/bronze_to_silver.py")
+        validator = read("src/spark/silver/validate_silver.py")
+        runtime = read("scripts/validate-silver-pipeline.ps1")
+        runner = read("scripts/run-silver.ps1")
+        validation_runner = read("scripts/validate-silver.ps1")
+
+        self.assertIn('"forecast_quantity": "decimal(12,2)"', transform)
+        self.assertIn("spark.sql.session.timeZone", transform)
+        self.assertIn("INVALID_CAST:", transform)
+        self.assertIn("_dq_original_record", transform)
+        self.assertIn("MOVEMENT_SIGN_MISMATCH", transform)
+        self.assertIn('(F.col("quantity") == 0)', transform)
+        self.assertIn('F.col("movement_type") == "OUT"', transform)
+        self.assertIn("date_add", transform)
+        self.assertIn("has_data_changes", transform)
+        self.assertIn('column_name != "_dq_validated_at"', transform)
+        self.assertIn(".localCheckpoint(eager=True)", transform)
+        self.assertIn("whenNotMatchedBySourceDelete", transform)
+        self.assertIn("SILVER_WRITE_APPLIED_", transform)
+        self.assertIn("QUARANTINE_WRITE_APPLIED_", transform)
+
+        for marker in (
+            "SILVER_BRONZE_COUNT=",
+            "SILVER_VALID_COUNT=",
+            "SILVER_QUARANTINE_COUNT=",
+            "SILVER_EXACT_MISMATCH_COUNT=0",
+            "SILVER_ORPHAN_COUNT=0",
+            "SILVER_RULE_PROBES_PASSED=",
+            "SILVER_CDF_ENABLED=true",
+        ):
+            self.assertIn(marker, validator)
+
+        self.assertIn("validate_foreign_keys", validator)
+        self.assertIn("validate_rule_probes", validator)
+        self.assertIn("exact_mismatch_count", validator)
+        self.assertIn(".localCheckpoint(eager=True)", validator)
+        self.assertIn("Invoke-SilverRun -RequireNoWrites", runtime)
+        self.assertIn("Compare-Object", runtime)
+        self.assertIn('@("spark", "minio")', runtime)
+        self.assertIn("--no-deps", runner)
+        self.assertIn("--no-deps", validation_runner)
+
+    def test_gold_pipeline_reconciles_metrics_and_skips_unchanged_writes(self):
+        transform = read("src/spark/gold/silver_to_gold.py")
+        validator = read("src/spark/gold/validate_gold.py")
+        runtime = read("scripts/validate-gold-pipeline.ps1")
+        runner = read("scripts/run-gold.ps1")
+        validation_runner = read("scripts/validate-gold.ps1")
+
+        self.assertIn(
+            'REVENUE_ORDER_STATUSES = ("PAID", "SHIPPED", "DELIVERED")',
+            transform,
+        )
+        self.assertIn("spark.sql.session.timeZone", transform)
+        self.assertIn("absolute_percentage_error", transform)
+        self.assertIn('F.col("actual_quantity").cast("decimal(18,4)")', transform)
+        self.assertIn("has_data_changes", transform)
+        self.assertIn("whenNotMatchedBySourceDelete", transform)
+        self.assertIn(".localCheckpoint(eager=True)", transform)
+        self.assertIn("GOLD_WRITE_APPLIED_", transform)
+
+        for marker in (
+            "GOLD_TABLE_COUNT=",
+            "GOLD_TOTAL_REVENUE=",
+            "GOLD_NET_REVENUE=",
+            "GOLD_EXACT_MISMATCH_COUNT=0",
+            "GOLD_FINANCIAL_RECONCILIATION=true",
+            "GOLD_SOURCE_RECONCILIATION=true",
+            "GOLD_RULE_PROBES_PASSED=",
+            "GOLD_CDF_ENABLED=true",
+        ):
+            self.assertIn(marker, validator)
+
+        self.assertIn("validate_business_reconciliation", validator)
+        self.assertIn("validate_rule_probes", validator)
+        self.assertIn("exact_mismatch_count", validator)
+        self.assertIn(".localCheckpoint(eager=True)", validator)
+        self.assertIn("Invoke-GoldRun -RequireNoWrites", runtime)
+        self.assertIn("Compare-Object", runtime)
+        self.assertIn('@("spark", "minio")', runtime)
+        self.assertIn("--no-deps", runner)
+        self.assertIn('--driver-memory "2g"', runner)
+        self.assertIn("--no-deps", validation_runner)
+        self.assertIn('--driver-memory "2g"', validation_runner)
+
     def test_consumers_share_external_pipeline_credentials(self):
         expected_file = self.config["secrets"]["s3_credentials"]["file"]
         consumers = ["spark", "hive-metastore", "trino"] + [
