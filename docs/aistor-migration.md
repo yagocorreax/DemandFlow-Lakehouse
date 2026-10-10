@@ -619,6 +619,74 @@ e versões. `scripts/validate-gold-pipeline.ps1` automatiza as duas passagens,
 as duas auditorias e a limpeza. Somente AIStor e um job Spark efêmero ficaram
 ativos por vez; todos os serviços foram confirmados parados ao final.
 
+### Validação Hive Metastore, Trino e Superset em 10/10/2026
+
+O Hive Metastore passou a publicar um healthcheck Thrift real. O script abre e
+fecha uma conexão TCP local sem enviar payload, e o Trino depende agora de
+`service_healthy`, não apenas de um processo iniciado. Isso eliminou a corrida
+em que o Trino podia carregar o catálogo enquanto o Derby ainda validava seu
+schema. O inicializador de permissões do volume continuou idempotente e o
+schema Hive `4.0.0` persistido foi reconhecido sem recriação.
+
+Os scripts de prontidão passaram de `localhost` para `127.0.0.1`, coerente com
+as portas publicadas exclusivamente em IPv4. Também foi corrigido o intervalo
+do polling: uma resposta Trino com `starting=true` agora aguarda dois segundos
+antes da próxima tentativa, em vez de consumir todas as tentativas durante o
+aquecimento. Os serviços Hive e Trino também pertencem ao perfil `bi`, portanto
+`--profile bi` resolve sozinho toda a cadeia exigida pelo Superset.
+
+O registro Trino exige exatamente as quatro tabelas Gold, confirma a localização
+`s3a://demandflow-gold/analytics/<tabela>` e verifica CDF em cada definição. A
+repetição encontrou as quatro como existentes e válidas, sem novo registro. O
+validador passou a exigir conjunto exato de tabelas, nomes e tipos em ordem,
+chaves sem duplicidade, campos obrigatórios, regras de domínio e fórmulas de
+negócio. Para limitar custo local, essas verificações foram agrupadas em quatro
+invocações do cliente Trino, em vez de uma invocação por métrica.
+
+A primeira consulta revelou uma diferença de escala entre engines:
+`AVG(decimal(18,2))` era arredondado pelo Trino para `21.9500`. A média agora
+converte cada erro para `DOUBLE` antes da agregação e arredonda somente o
+resultado final, reproduzindo o MAE Spark `21.9543` sem alterar os dados.
+
+O Superset ganhou um inicializador idempotente separado. Ele executa migrações,
+confirma ou cria o administrador, sincroniza permissões, grava a conexão
+`DemandFlow Trino` e usa o comando oficial `superset test-db`. O teste reconheceu
+o engine e o dialeto Trino, inspecionou seus recursos, conectou ao catálogo e
+executou `SELECT 1`. O servidor só inicia após o inicializador e possui
+healthcheck próprio em `/health`. A chave secreta é obrigatória, cookies de
+sessão são `HttpOnly`/`SameSite=Lax`, e a senha administrativa não é entregue ao
+container web.
+
+Pelo Trino foram confirmadas novamente `13`, `6`, `18` e `252` linhas nas
+tabelas `daily_sales`, `product_sales`, `inventory_health` e
+`forecast_accuracy`, total `289`. Permaneceram `31` pedidos realizados, receita
+total e líquida `17241.99`, `58` unidades, `18` posições saudáveis e MAE
+`21.9543`. A segunda auditoria, após o teste do Superset, retornou exatamente o
+mesmo snapshot.
+
+Uma amostra com os quatro serviços saudáveis mediu aproximadamente `309 MiB`
+no AIStor, `451 MiB` no Hive, `908 MiB` no Trino e `181 MiB` no Superset, cerca
+de `1,85 GiB` em uso. Os limites permanecem em `1 + 1 + 2 + 1 GiB`, oferecendo
+margem sem elevar a reserva local. O SQLite do Superset e o rate-limit em
+memória são adequados a esta execução local, de instância única. O próprio
+Superset alerta que SQLite será removido em uma versão futura; antes de uso
+multiusuário ou atualização principal, os metadados devem migrar para
+PostgreSQL, o que não foi feito agora para evitar mais um serviço permanente e
+consumo de memória.
+
+A pilha permanece deliberadamente local-only: o Superset usa `superset run` e
+o Trino não possui autenticação/TLS. As portas publicadas estão limitadas a
+`127.0.0.1`, reduzindo a exposição no cenário atual. Antes de acesso externo ou
+multiusuário, é necessário adotar Gunicorn/reverse proxy com TLS, autenticação
+no Trino e um banco de metadados suportado; acrescentar esses componentes agora
+contrariaria a restrição de infraestrutura local sem melhorar o uso individual.
+
+`scripts/validate-query-stack.ps1` automatiza registro, duas auditorias Trino,
+inicialização/conexão Superset, healthcheck HTTP, comparação de snapshots e
+limpeza. Ao final, os quatro serviços foram parados e o container one-shot
+`superset-init`, que recebeu as variáveis administrativas, foi removido. O
+volume de metadados foi preservado.
+
 ## Operação isolada
 
 Preparar credenciais uma única vez:
@@ -653,10 +721,17 @@ docker compose stop -t 30 minio
 
 Não usar `docker compose down -v`: isso excluiria volumes persistentes.
 
+Validar toda a camada de consulta/BI, começando e terminando com os serviços
+parados:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/validate-query-stack.ps1
+```
+
 ## Validação estática
 
 ```powershell
-docker compose --profile cdc --profile processing --profile query --profile orchestration config --quiet
+docker compose --profile cdc --profile processing --profile query --profile bi --profile orchestration config --quiet
 .venv\Scripts\python.exe -B -m unittest discover -s tests -p test_storage_migration.py -v
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/validate-static-syntax.ps1
 git diff --check
@@ -664,13 +739,13 @@ git diff --check
 
 Resultado atual:
 
-- dezoito testes de consistência passaram, incluindo isolamento da imagem Spark,
+- dezenove testes de consistência passaram, incluindo isolamento da imagem Spark,
   preservação dos componentes Generator/CDC, injeção segura e configuração
   PostgreSQL sem senha em argumentos, o contrato do validador CDC e a
   recuperação/idempotência Kafka → Raw, a equivalência/idempotência Bronze e o
   contrato de qualidade/idempotência Silver, além da reconciliação de métricas
-  e idempotência Gold;
-- 28 scripts PowerShell passaram pelo parser sem execução operacional;
+  e idempotência Gold e dos contratos Hive/Trino/Superset;
+- 29 scripts PowerShell passaram pelo parser sem execução operacional;
 - scripts shell passaram em `sh -n`;
 - Compose completo e `git diff --check` passaram;
 - arquivos de licença e credenciais estão ignorados pelo Git e pelo contexto de
@@ -699,14 +774,13 @@ mas não são consumidas pela configuração atual.
 
 Cada bloco exige nova autorização e termina com os serviços parados:
 
-1. validar Hive Metastore, Trino e Superset sobre os dados Gold;
-2. validar o DAG Airflow ponta a ponta, repetibilidade e retomada;
-3. executar a auditoria final de segurança/desempenho, incluindo heartbeat e
+1. validar o DAG Airflow ponta a ponta, repetibilidade e retomada;
+2. executar a auditoria final de segurança/desempenho, incluindo heartbeat e
    `ConfigProvider` do CDC, inventário de CVEs na
    medida em que uma ferramenta estiver disponível, documentação e checklist
    de entrega.
 
-Esses são três blocos controlados restantes. A separação dos componentes é
+Esses são dois blocos controlados restantes. A separação dos componentes é
 intencional para limitar CPU e memória; falhas que exijam correção e nova
 execução podem acrescentar tentativas, mas não novos blocos planejados.
 
