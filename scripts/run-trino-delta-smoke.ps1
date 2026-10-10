@@ -29,7 +29,7 @@ try {
 
     for ($attempt = 1; $attempt -le 30; $attempt++) {
         $metastoreReady = Test-NetConnection `
-            -ComputerName localhost `
+            -ComputerName 127.0.0.1 `
             -Port 9083 `
             -InformationLevel Quiet `
             -WarningAction SilentlyContinue
@@ -61,14 +61,23 @@ try {
 
     for ($attempt = 1; $attempt -le 30; $attempt++) {
         try {
-            Invoke-RestMethod `
-                -Uri "http://localhost:8080/v1/info" `
-                -TimeoutSec 2 | Out-Null
+            $trinoInfo = Invoke-RestMethod `
+                -Uri "http://127.0.0.1:8080/v1/info" `
+                -TimeoutSec 2
 
-            $trinoReady = $true
-            break
+            if (
+                $trinoInfo.state -eq "ACTIVE" -and
+                -not [bool]$trinoInfo.starting
+            ) {
+                $trinoReady = $true
+                break
+            }
         }
         catch {
+            # A próxima tentativa usa o mesmo intervalo do estado "starting".
+        }
+
+        if (-not $trinoReady) {
             Start-Sleep -Seconds 2
         }
     }
