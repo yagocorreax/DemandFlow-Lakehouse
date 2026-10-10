@@ -183,6 +183,7 @@ services:
 
     profiles:
       - query
+      - bi
 
     user: "0:0"
 
@@ -209,6 +210,7 @@ services:
 
     profiles:
       - query
+      - bi
 
     env_file: *s3-env-files
 
@@ -235,6 +237,14 @@ services:
     volumes:
       - demandflow_hive_metastore_data:/opt/hive/data
       - ./infra/hive-metastore/core-site.xml:/opt/hadoop/etc/hadoop/core-site.xml:ro
+      - ./infra/hive-metastore/healthcheck.sh:/opt/demandflow/hive-metastore-healthcheck.sh:ro
+
+    healthcheck:
+      test: ["CMD", "bash", "/opt/demandflow/hive-metastore-healthcheck.sh"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 30s
 
     mem_limit: 1g
     cpus: "1.0"
@@ -246,6 +256,7 @@ services:
 
     profiles:
       - query
+      - bi
 
     env_file: *s3-env-files
 
@@ -261,7 +272,7 @@ services:
         condition: service_completed_successfully
 
       hive-metastore:
-        condition: service_started
+        condition: service_healthy
 
     ports:
       - "127.0.0.1:8080:8080"
@@ -377,16 +388,47 @@ services:
     mem_limit: 1200m
     cpus: "1.0"
 
+  superset-init:
+    build:
+      context: .
+      dockerfile: infra/superset/Dockerfile
+    image: demandflow-superset:6.1.0-trino
+    container_name: demandflow-superset-init
+    restart: "no"
+    profiles:
+      - bi
+    environment:
+      SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY:?Configure SUPERSET_SECRET_KEY in .env}
+      SUPERSET_HOME: /app/superset_home
+      SUPERSET_CONFIG_PATH: /app/pythonpath/superset_config.py
+      SUPERSET_ADMIN_USERNAME: ${SUPERSET_ADMIN_USERNAME:?Configure SUPERSET_ADMIN_USERNAME in .env}
+      SUPERSET_ADMIN_PASSWORD: ${SUPERSET_ADMIN_PASSWORD:?Configure SUPERSET_ADMIN_PASSWORD in .env}
+      SUPERSET_ADMIN_FIRSTNAME: ${SUPERSET_ADMIN_FIRSTNAME:?Configure SUPERSET_ADMIN_FIRSTNAME in .env}
+      SUPERSET_ADMIN_LASTNAME: ${SUPERSET_ADMIN_LASTNAME:?Configure SUPERSET_ADMIN_LASTNAME in .env}
+      SUPERSET_ADMIN_EMAIL: ${SUPERSET_ADMIN_EMAIL:?Configure SUPERSET_ADMIN_EMAIL in .env}
+      SUPERSET_TRINO_URI: trino://superset@trino:8080/delta/gold
+    volumes:
+      - demandflow_superset_home:/app/superset_home
+      - ./infra/superset/superset_config.py:/app/pythonpath/superset_config.py:ro
+      - ./infra/superset/initialize.sh:/app/pythonpath/initialize.sh:ro
+    depends_on:
+      trino:
+        condition: service_healthy
+    command: ["bash", "/app/pythonpath/initialize.sh"]
+    mem_limit: 1g
+    cpus: "1.0"
+
   superset:
     build:
       context: .
       dockerfile: infra/superset/Dockerfile
+    image: demandflow-superset:6.1.0-trino
     container_name: demandflow-superset
     restart: unless-stopped
     profiles:
       - bi
     environment:
-      SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY}
+      SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY:?Configure SUPERSET_SECRET_KEY in .env}
       SUPERSET_HOME: /app/superset_home
       SUPERSET_CONFIG_PATH: /app/pythonpath/superset_config.py
     ports:
@@ -394,6 +436,12 @@ services:
     volumes:
       - demandflow_superset_home:/app/superset_home
       - ./infra/superset/superset_config.py:/app/pythonpath/superset_config.py:ro
+      - ./infra/superset/healthcheck.py:/app/pythonpath/healthcheck.py:ro
+    depends_on:
+      trino:
+        condition: service_healthy
+      superset-init:
+        condition: service_completed_successfully
     command:
       - superset
       - run
@@ -402,7 +450,14 @@ services:
       - -p
       - "8088"
       - --with-threads
+    healthcheck:
+      test: ["CMD", "/app/.venv/bin/python", "/app/pythonpath/healthcheck.py"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 30s
     mem_limit: 1g
+    cpus: "1.0"
 
   airflow-db:
     image: postgres:16-alpine
