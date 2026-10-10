@@ -573,7 +573,18 @@ class StorageMigrationTest(unittest.TestCase):
                              "service_healthy")
         self.assertEqual(self.services["hive-metastore"]["depends_on"]["hive-metastore-init"]["condition"],
                          "service_completed_successfully")
-        self.assertIn("hive-metastore", self.services["trino"]["depends_on"])
+        self.assertEqual(self.services["trino"]["depends_on"]["hive-metastore"]["condition"],
+                         "service_healthy")
+        hive_healthcheck = " ".join(self.services["hive-metastore"]["healthcheck"]["test"])
+        self.assertIn("hive-metastore-healthcheck.sh", hive_healthcheck)
+        healthcheck_script = read("infra/hive-metastore/healthcheck.sh")
+        self.assertIn("/dev/tcp/127.0.0.1/9083", healthcheck_script)
+        self.assertNotIn(b"\r", (ROOT / "infra/hive-metastore/healthcheck.sh").read_bytes())
+        register_gold = read("scripts/register-gold-trino.ps1")
+        self.assertIn("http://127.0.0.1:8080/v1/info", register_gold)
+        self.assertIn("s3a://demandflow-gold/analytics", register_gold)
+        self.assertIn("change_data_feed_enabled = true", register_gold)
+        self.assertIn("TRINO_TABLE_VALIDATED_", register_gold)
 
     def test_legacy_volume_retained_but_never_mounted(self):
         # Compose omits unused volumes from its normalized output.
@@ -622,6 +633,50 @@ class StorageMigrationTest(unittest.TestCase):
         self.assertEqual(catalog["s3.aws-access-key"], "${ENV:AWS_ACCESS_KEY_ID}")
         self.assertEqual(catalog["s3.aws-secret-key"], "${ENV:AWS_SECRET_ACCESS_KEY}")
         self.assertEqual(catalog["s3.path-style-access"], "true")
+
+    def test_superset_initializes_metadata_and_validates_trino(self):
+        initializer = self.services["superset-init"]
+        superset = self.services["superset"]
+        for service_name in ("hive-metastore-init", "hive-metastore", "trino"):
+            self.assertIn("bi", self.services[service_name]["profiles"])
+        self.assertEqual(initializer["image"], "demandflow-superset:6.1.0-trino")
+        self.assertEqual(superset["image"], initializer["image"])
+        self.assertEqual(initializer["depends_on"]["trino"]["condition"],
+                         "service_healthy")
+        self.assertEqual(superset["depends_on"]["trino"]["condition"],
+                         "service_healthy")
+        self.assertEqual(superset["depends_on"]["superset-init"]["condition"],
+                         "service_completed_successfully")
+        self.assertIn("SUPERSET_ADMIN_PASSWORD", initializer["environment"])
+        self.assertNotIn("SUPERSET_ADMIN_PASSWORD", superset["environment"])
+        self.assertEqual(initializer["environment"]["SUPERSET_TRINO_URI"],
+                         "trino://superset@trino:8080/delta/gold")
+        healthcheck = " ".join(superset["healthcheck"]["test"])
+        self.assertIn("healthcheck.py", healthcheck)
+
+        init_script = read("infra/superset/initialize.sh")
+        for command in ("superset db upgrade", "superset fab create-admin",
+                        "superset init", "superset set-database-uri",
+                        "superset test-db"):
+            self.assertIn(command, init_script)
+        self.assertNotIn("|| true", init_script)
+        self.assertIn("SUPERSET_TRINO_CONNECTION=true", init_script)
+        query_validation = read("scripts/validate-query-stack.ps1")
+        for marker in ("TRINO_EXACT_TABLE_SET=true",
+                       "SUPERSET_TRINO_CONNECTION=true",
+                       "SUPERSET_HTTP_HEALTH=true",
+                       "QUERY_STACK_METRICS_STABLE=true"):
+            self.assertIn(marker, query_validation)
+        self.assertIn("rm -f superset-init", query_validation)
+        self.assertIn("stop -t 30 $service", query_validation)
+        config = read("infra/superset/superset_config.py")
+        self.assertIn('os.environ["SUPERSET_SECRET_KEY"]', config)
+        self.assertIn("SESSION_COOKIE_HTTPONLY = True", config)
+        ast.parse(config, filename="infra/superset/superset_config.py")
+        ast.parse(read("infra/superset/healthcheck.py"),
+                  filename="infra/superset/healthcheck.py")
+        for path in ("infra/superset/initialize.sh",):
+            self.assertNotIn(b"\r", (ROOT / path).read_bytes())
 
     def test_spark_jobs_and_airflow_credentials(self):
         jobs = [path for path in ROOT.joinpath("src/spark").rglob("*.py")
