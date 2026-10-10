@@ -13,10 +13,11 @@ try {
         --profile processing `
         run `
         --rm `
+        --no-deps `
         spark `
         /opt/spark/bin/spark-submit `
         --master "local[2]" `
-        --driver-memory "1g" `
+        --driver-memory "2g" `
         --packages `
         "io.delta:delta-spark_2.12:3.3.2,org.apache.hadoop:hadoop-aws:3.3.4" `
         --conf "spark.jars.ivy=/opt/demandflow/.ivy2" `
