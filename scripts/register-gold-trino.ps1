@@ -23,15 +23,24 @@ try {
 
     for ($attempt = 1; $attempt -le 60; $attempt++) {
         try {
-            Invoke-RestMethod `
-                -Uri "http://localhost:8080/v1/info" `
+            $trinoInfo = Invoke-RestMethod `
+                -Uri "http://127.0.0.1:8080/v1/info" `
                 -TimeoutSec 2 |
-                Out-Null
+                Select-Object -First 1
 
-            $trinoReady = $true
-            break
+            if (
+                $trinoInfo.state -eq "ACTIVE" -and
+                -not [bool]$trinoInfo.starting
+            ) {
+                $trinoReady = $true
+                break
+            }
         }
         catch {
+            # A próxima tentativa usa o mesmo intervalo do estado "starting".
+        }
+
+        if (-not $trinoReady) {
             Start-Sleep -Seconds 2
         }
     }
@@ -88,32 +97,53 @@ $tables = [ordered]@{
             Out-String
         ).Trim()
 
-        if ($existingText -eq $tableName) {
-            Write-Host "[EXISTENTE] $tableName"
-            continue
+        $location = $tables[$tableName]
+        $wasExisting = $existingText -eq $tableName
+
+        if (-not $wasExisting) {
+            Write-Host "[REGISTRANDO] $tableName"
+
+            docker exec demandflow-trino `
+                trino `
+                --execute `
+                "CALL delta.system.register_table(
+                    schema_name => 'gold',
+                    table_name => '$tableName',
+                    table_location => '$location'
+                );"
+
+            if ($LASTEXITCODE -ne 0) {
+                throw (
+                    "Falha ao registrar tabela: " +
+                    $tableName
+                )
+            }
         }
 
-        $location = $tables[$tableName]
-
-        Write-Host "[REGISTRANDO] $tableName"
-
-        docker exec demandflow-trino `
+        $definition = docker exec demandflow-trino `
             trino `
-            --execute `
-            "CALL delta.system.register_table(
-                schema_name => 'gold',
-                table_name => '$tableName',
-                table_location => '$location'
-            );"
+            --output-format TSV `
+            --execute "SHOW CREATE TABLE delta.gold.$tableName;"
 
         if ($LASTEXITCODE -ne 0) {
-            throw (
-                "Falha ao registrar tabela: " +
-                $tableName
-            )
+            throw "Falha ao validar a definição de $tableName."
         }
 
-        Write-Host "[OK] $tableName"
+        $definitionText = ($definition | Out-String)
+        if (-not $definitionText.Contains("location = '$location'")) {
+            throw "$tableName está registrada em uma localização inesperada."
+        }
+        if (-not $definitionText.Contains("change_data_feed_enabled = true")) {
+            throw "$tableName não expõe Change Data Feed no catálogo Trino."
+        }
+
+        if ($wasExisting) {
+            Write-Host "[EXISTENTE E VALIDADA] $tableName"
+        }
+        else {
+            Write-Host "[OK] $tableName"
+        }
+        Write-Output "TRINO_TABLE_VALIDATED_${tableName}=true"
     }
 
     Write-Host ""
@@ -129,6 +159,7 @@ $tables = [ordered]@{
 
     Write-Host ""
     Write-Host "REGISTRO GOLD NO TRINO CONCLUÍDO."
+    Write-Output "TRINO_REGISTERED_TABLE_COUNT=4"
 }
 finally {
     Pop-Location
