@@ -240,7 +240,7 @@ class StorageMigrationTest(unittest.TestCase):
         self.assertIn('Wait-ContainerHealthy', register)
         self.assertIn('localhost", "127.0.0.1", "::1', register)
         self.assertIn("$connectUri.Port -ne 8083", register)
-        self.assertIn("$i -le 90", register)
+        self.assertIn("$i -le 150", register)
         self.assertIn(
             '$connectUrl = "http://127.0.0.1:8083"',
             register,
@@ -700,6 +700,105 @@ class StorageMigrationTest(unittest.TestCase):
         self.assertEqual(len(private), 1)
         self.assertEqual({key.value for key in private[0].keys},
                          {"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"})
+
+    def test_airflow_orchestration_is_bounded_and_recoverable(self):
+        airflow_services = (
+            "airflow-init", "airflow-api-server", "airflow-scheduler",
+            "airflow-dag-processor", "airflow-triggerer", "airflow-worker",
+        )
+        for source_service in ("kafka", "debezium"):
+            self.assertIn("orchestration",
+                          self.services[source_service]["profiles"])
+
+        for service_name in airflow_services:
+            service = self.services[service_name]
+            self.assertEqual(service["image"],
+                             "demandflow-airflow:3.3.2-docker")
+            environment = service["environment"]
+            self.assertEqual(environment["AIRFLOW__CORE__PARALLELISM"], "1")
+            self.assertEqual(
+                environment["AIRFLOW__CORE__MAX_ACTIVE_TASKS_PER_DAG"], "1"
+            )
+            self.assertEqual(
+                environment["AIRFLOW__CELERY__WORKER_CONCURRENCY"], "1"
+            )
+
+        for service_name in airflow_services[1:]:
+            service = self.services[service_name]
+            self.assertEqual(
+                service["depends_on"]["airflow-init"]["condition"],
+                "service_completed_successfully",
+            )
+            self.assertIn("healthcheck", service)
+            self.assertGreater(int(service["mem_limit"]), 0)
+            self.assertGreater(float(service["cpus"]), 0)
+
+        worker_mounts = {
+            mount["target"]: mount
+            for mount in self.services["airflow-worker"]["volumes"]
+        }
+        self.assertTrue(worker_mounts["/opt/airflow/dags"]["read_only"])
+        self.assertTrue(worker_mounts["/opt/airflow/plugins"]["read_only"])
+        self.assertEqual(worker_mounts["/var/run/docker.sock"]["type"], "bind")
+
+        redis = self.services["airflow-redis"]
+        self.assertIn("--appendonly", redis["command"])
+        redis_mounts = {mount["target"]: mount for mount in redis["volumes"]}
+        self.assertEqual(redis_mounts["/data"]["source"],
+                         "demandflow_airflow_redis_data")
+        self.assertGreater(int(redis["mem_limit"]), 0)
+        self.assertGreater(float(redis["cpus"]), 0)
+        self.assertGreater(int(self.services["airflow-db"]["mem_limit"]), 0)
+
+        initializer = read("infra/airflow/initialize.sh")
+        self.assertIn("set -Eeuo pipefail", initializer)
+        self.assertIn("airflow db migrate", initializer)
+        self.assertIn("airflow users reset-password", initializer)
+        self.assertIn("AIRFLOW_METADATA_READY=true", initializer)
+        self.assertIn("AIRFLOW_ADMIN_READY=true", initializer)
+        self.assertNotIn("|| true", initializer)
+        self.assertNotIn(b"\r", (ROOT / "infra/airflow/initialize.sh").read_bytes())
+
+        healthcheck = read("infra/airflow/api_healthcheck.py")
+        self.assertIn("/api/v2/monitor/health", healthcheck)
+        ast.parse(healthcheck, filename="infra/airflow/api_healthcheck.py")
+        job_healthcheck = read("infra/airflow/job_healthcheck.py")
+        self.assertIn("latest_heartbeat", job_healthcheck)
+        self.assertIn("INTERVAL '90 seconds'", job_healthcheck)
+        self.assertNotIn("airflow.jobs", job_healthcheck)
+        ast.parse(job_healthcheck, filename="infra/airflow/job_healthcheck.py")
+        for service_name in (
+            "airflow-scheduler", "airflow-dag-processor", "airflow-triggerer"
+        ):
+            health_command = " ".join(
+                self.services[service_name]["healthcheck"]["test"]
+            )
+            self.assertIn("job_healthcheck.py", health_command)
+            self.assertEqual(
+                self.services[service_name]["healthcheck"]["timeout"], "10s"
+            )
+
+        dag = read("airflow/dags/demandflow_pipeline.py")
+        self.assertIn('"retries": 1', dag)
+        self.assertIn("max_active_tasks=1", dag)
+        self.assertIn('mem_limit="2g"', dag)
+        self.assertIn('"com.demandflow.component": "airflow-task"', dag)
+
+        validation = read("scripts/validate-airflow-pipeline.ps1")
+        for marker in (
+            "AIRFLOW_FIRST_RUN_SUCCESS=true",
+            "AIRFLOW_RESTART_RECOVERY=true",
+            "AIRFLOW_METADATA_PERSISTED=true",
+            "AIRFLOW_REPEAT_RAW_INPUT_ZERO=true",
+            "AIRFLOW_REPEAT_GOLD_NO_WRITES=true",
+            "AIRFLOW_REPEAT_RUN_SUCCESS=true",
+            "AIRFLOW_INTERRUPTED_RUN_RECOVERED=true",
+        ):
+            self.assertIn(marker, validation)
+        self.assertIn("SELECT state FROM dag_run", validation)
+        self.assertIn("Start-Sleep -Seconds 20", validation)
+        self.assertIn("stop `\n                -t 60", validation)
+        self.assertIn("rm -f airflow-init", validation)
 
     def test_no_runtime_localstack_references_or_missing_script_targets(self):
         for directory in ("src", "scripts", "infra", "airflow/dags"):
