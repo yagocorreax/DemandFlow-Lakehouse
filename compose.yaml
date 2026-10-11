@@ -5,6 +5,7 @@ x-airflow-common: &airflow-common
   build:
     context: .
     dockerfile: infra/airflow/Dockerfile
+  image: demandflow-airflow:3.3.2-docker
 
   env_file: *s3-env-files
 
@@ -21,6 +22,11 @@ x-airflow-common: &airflow-common
 
     AIRFLOW__CORE__LOAD_EXAMPLES: "false"
     AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
+    AIRFLOW__CORE__PARALLELISM: "1"
+    AIRFLOW__CORE__MAX_ACTIVE_TASKS_PER_DAG: "1"
+    AIRFLOW__CORE__HIDE_SENSITIVE_VAR_CONN_FIELDS: "true"
+    AIRFLOW__CELERY__WORKER_CONCURRENCY: "1"
+    AIRFLOW__CELERY__WORKER_PREFETCH_MULTIPLIER: "1"
 
     DEMANDFLOW_DOCKER_NETWORK: ${DEMANDFLOW_DOCKER_NETWORK}
     AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://airflow-api-server:8080/execution/
@@ -46,9 +52,9 @@ x-airflow-common: &airflow-common
     GOLD_S3_PATH: ${GOLD_S3_PATH}
 
   volumes:
-    - ./airflow/dags:/opt/airflow/dags
+    - ./airflow/dags:/opt/airflow/dags:ro
     - ./airflow/logs:/opt/airflow/logs
-    - ./airflow/plugins:/opt/airflow/plugins
+    - ./airflow/plugins:/opt/airflow/plugins:ro
 
   depends_on:
     airflow-db:
@@ -291,6 +297,7 @@ services:
 
     profiles:
       - cdc
+      - orchestration
 
     ports:
       - "127.0.0.1:9092:9092"
@@ -353,6 +360,7 @@ services:
 
     profiles:
       - cdc
+      - orchestration
 
     environment:
       BOOTSTRAP_SERVERS: kafka:29092
@@ -478,12 +486,16 @@ services:
           "CMD-SHELL",
           "pg_isready -U ${AIRFLOW_DB_USER} -d ${AIRFLOW_DB_NAME}"
         ]
-      interval: 10s
+      interval: 5s
       timeout: 5s
       retries: 10
 
     volumes:
       - demandflow_airflow_db_data:/var/lib/postgresql/data
+
+    mem_limit: 512m
+    cpus: "0.5"
+    stop_grace_period: 30s
 
 
   airflow-redis:
@@ -493,6 +505,13 @@ services:
 
     profiles:
       - orchestration
+
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
 
     healthcheck:
       test:
@@ -505,30 +524,25 @@ services:
       timeout: 5s
       retries: 10
 
+    volumes:
+      - demandflow_airflow_redis_data:/data
+
+    mem_limit: 192m
+    cpus: "0.25"
+    stop_grace_period: 30s
+
 
   airflow-init:
     <<: *airflow-common
 
     container_name: demandflow-airflow-init
+    restart: "no"
 
     profiles:
       - orchestration
 
     entrypoint: /bin/bash
-
-    command:
-      - -c
-      - |
-        airflow db migrate
-
-        airflow users create \
-          --username "${AIRFLOW_ADMIN_USERNAME}" \
-          --password "${AIRFLOW_ADMIN_PASSWORD}" \
-          --firstname DemandFlow \
-          --lastname Admin \
-          --role Admin \
-          --email "${AIRFLOW_ADMIN_EMAIL}" \
-        || true
+    command: ["/opt/airflow/demandflow/initialize.sh"]
 
     environment:
       <<: *airflow-common-env
@@ -538,6 +552,9 @@ services:
       AIRFLOW_ADMIN_EMAIL: ${AIRFLOW_ADMIN_EMAIL}
       DEMANDFLOW_DOCKER_NETWORK: ${DEMANDFLOW_DOCKER_NETWORK}
       AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://airflow-api-server:8080/execution/
+
+    mem_limit: 768m
+    cpus: "0.75"
 
   airflow-api-server:
     <<: *airflow-common
@@ -553,6 +570,25 @@ services:
     ports:
       - "127.0.0.1:8081:8080"
 
+    depends_on:
+      airflow-db:
+        condition: service_healthy
+      airflow-redis:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+
+    healthcheck:
+      test: ["CMD", "python", "/opt/airflow/demandflow/api_healthcheck.py"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 30s
+
+    mem_limit: 768m
+    cpus: "1.0"
+    stop_grace_period: 30s
+
 
   airflow-scheduler:
     <<: *airflow-common
@@ -564,6 +600,26 @@ services:
       - orchestration
 
     command: scheduler
+
+    depends_on:
+      airflow-db:
+        condition: service_healthy
+      airflow-redis:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+
+    healthcheck:
+      test: ["CMD", "python", "/opt/airflow/demandflow/job_healthcheck.py", "SchedulerJob"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
+      start_interval: 5s
+
+    mem_limit: 768m
+    cpus: "0.75"
+    stop_grace_period: 60s
 
 
   airflow-dag-processor:
@@ -577,6 +633,26 @@ services:
 
     command: dag-processor
 
+    depends_on:
+      airflow-db:
+        condition: service_healthy
+      airflow-redis:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+
+    healthcheck:
+      test: ["CMD", "python", "/opt/airflow/demandflow/job_healthcheck.py", "DagProcessorJob"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
+      start_interval: 5s
+
+    mem_limit: 512m
+    cpus: "0.5"
+    stop_grace_period: 60s
+
 
   airflow-triggerer:
     <<: *airflow-common
@@ -588,6 +664,26 @@ services:
       - orchestration
 
     command: triggerer
+
+    depends_on:
+      airflow-db:
+        condition: service_healthy
+      airflow-redis:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+
+    healthcheck:
+      test: ["CMD", "python", "/opt/airflow/demandflow/job_healthcheck.py", "TriggererJob"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
+      start_interval: 5s
+
+    mem_limit: 512m
+    cpus: "0.5"
+    stop_grace_period: 60s
 
 
   airflow-worker:
@@ -601,11 +697,37 @@ services:
 
     command: celery worker
 
+    init: true
+
+    depends_on:
+      airflow-db:
+        condition: service_healthy
+      airflow-redis:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "celery --app airflow.providers.celery.executors.celery_executor.app inspect ping -d celery@$${HOSTNAME} --timeout 10"
+        ]
+      interval: 120s
+      timeout: 45s
+      retries: 3
+      start_period: 20s
+      start_interval: 15s
+
     volumes:
-      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/dags:/opt/airflow/dags:ro
       - ./airflow/logs:/opt/airflow/logs
-      - ./airflow/plugins:/opt/airflow/plugins
+      - ./airflow/plugins:/opt/airflow/plugins:ro
       - /var/run/docker.sock:/var/run/docker.sock
+
+    mem_limit: 1g
+    cpus: "1.0"
+    stop_grace_period: 60s
 
 volumes:
   demandflow_postgres_data:
@@ -618,6 +740,7 @@ volumes:
   demandflow_localstack_data:
   demandflow_superset_home:
   demandflow_airflow_db_data:
+  demandflow_airflow_redis_data:
 
 secrets:
   minio_license:
