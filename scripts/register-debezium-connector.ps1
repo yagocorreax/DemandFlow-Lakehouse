@@ -160,9 +160,10 @@ try {
 
     $ready = $false
 
-    # Nesta máquina local, a recuperação dos tópicos internos já levou 124 s.
-    # A janela de 180 s evita um falso timeout sem aumentar CPU ou memória.
-    for ($i = 1; $i -le 90; $i++) {
+    # Nesta máquina local, a recuperação dos tópicos internos já ultrapassou
+    # 180 s após reinícios consecutivos. A janela de 300 s evita um falso
+    # timeout sem aumentar CPU ou memória; as sondagens continuam leves.
+    for ($i = 1; $i -le 150; $i++) {
         try {
             Invoke-RestMethod `
                 -Uri "$connectUrl/connector-plugins" `
