@@ -77,7 +77,10 @@ SPARK_ENV = {
 
 
 DEFAULT_ARGS = {
-    "retries": 0,
+    "retries": 1,
+    "retry_delay": timedelta(seconds=30),
+    "retry_exponential_backoff": True,
+    "max_retry_delay": timedelta(minutes=2),
 }
 
 
@@ -135,7 +138,16 @@ def spark_task(
 
         do_xcom_push=False,
 
-        execution_timeout=timedelta(minutes=10)
+        cpus=2.0,
+
+        mem_limit="2g",
+
+        labels={
+            "com.demandflow.component": "airflow-task",
+            "com.demandflow.pipeline": "lakehouse",
+        },
+
+        execution_timeout=timedelta(minutes=30),
     )
 
 with DAG(
@@ -158,6 +170,10 @@ with DAG(
     catchup=False,
 
     max_active_runs=1,
+
+    max_active_tasks=1,
+
+    dagrun_timeout=timedelta(hours=3),
 
     default_args=DEFAULT_ARGS,
 
@@ -211,6 +227,17 @@ with DAG(
         mount_tmp_dir=False,
 
         do_xcom_push=False,
+
+        cpus=0.25,
+
+        mem_limit="128m",
+
+        labels={
+            "com.demandflow.component": "airflow-task",
+            "com.demandflow.pipeline": "infrastructure-check",
+        },
+
+        execution_timeout=timedelta(minutes=2),
         environment={"S3_HEALTH_URL": os.environ["S3_HEALTH_URL"]},
     )
 
