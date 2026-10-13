@@ -767,6 +767,13 @@ class StorageMigrationTest(unittest.TestCase):
         self.assertIn("INTERVAL '90 seconds'", job_healthcheck)
         self.assertNotIn("airflow.jobs", job_healthcheck)
         ast.parse(job_healthcheck, filename="infra/airflow/job_healthcheck.py")
+        worker_healthcheck = read("infra/airflow/worker_healthcheck.py")
+        self.assertIn("celery_worker_is_running", worker_healthcheck)
+        self.assertIn("AIRFLOW__CELERY__BROKER_URL", worker_healthcheck)
+        self.assertIn('endpoint_is_reachable("127.0.0.1", 8793)',
+                      worker_healthcheck)
+        ast.parse(worker_healthcheck,
+                  filename="infra/airflow/worker_healthcheck.py")
         for service_name in (
             "airflow-scheduler", "airflow-dag-processor", "airflow-triggerer"
         ):
@@ -781,8 +788,43 @@ class StorageMigrationTest(unittest.TestCase):
         dag = read("airflow/dags/demandflow_pipeline.py")
         self.assertIn('"retries": 1', dag)
         self.assertIn("max_active_tasks=1", dag)
+        self.assertNotIn("dagrun_timeout=", dag)
         self.assertIn('mem_limit="2g"', dag)
         self.assertIn('"com.demandflow.component": "airflow-task"', dag)
+
+        api_environment = self.services["airflow-api-server"]["environment"]
+        scheduler_environment = self.services["airflow-scheduler"]["environment"]
+        worker_environment = self.services["airflow-worker"]["environment"]
+        triggerer_environment = self.services["airflow-triggerer"]["environment"]
+        self.assertIn("AIRFLOW__API_AUTH__JWT_SECRET", api_environment)
+        self.assertIn("AIRFLOW__API_AUTH__JWT_SECRET", scheduler_environment)
+        for environment in (api_environment, scheduler_environment,
+                            worker_environment, triggerer_environment):
+            self.assertIn("AIRFLOW__API__SECRET_KEY", environment)
+        self.assertNotIn(
+            "AIRFLOW__API_AUTH__JWT_SECRET", worker_environment
+        )
+        self.assertEqual(
+            worker_environment["AIRFLOW__WORKERS__EXECUTION_API_TIMEOUT"],
+            "30",
+        )
+        self.assertEqual(
+            worker_environment["AIRFLOW__WORKERS__MAX_FAILED_HEARTBEATS"],
+            "6",
+        )
+        worker_health_command = " ".join(
+            self.services["airflow-worker"]["healthcheck"]["test"]
+        )
+        self.assertIn("worker_healthcheck.py", worker_health_command)
+
+        secret_initializer = read("scripts/ensure-airflow-secrets.ps1")
+        self.assertIn("RandomNumberGenerator", secret_initializer)
+        self.assertIn("AIRFLOW_API_SECRET_READY=true", secret_initializer)
+        self.assertIn("[System.IO.File]::Replace", secret_initializer)
+        self.assertNotRegex(
+            secret_initializer,
+            r"(?i)Write-(?:Host|Output)[^\n]*(?:newSecret|existingSecret)",
+        )
 
         validation = read("scripts/validate-airflow-pipeline.ps1")
         for marker in (
@@ -796,7 +838,8 @@ class StorageMigrationTest(unittest.TestCase):
         ):
             self.assertIn(marker, validation)
         self.assertIn("SELECT state FROM dag_run", validation)
-        self.assertIn("Start-Sleep -Seconds 20", validation)
+        self.assertIn("[int]$Attempts = 60", validation)
+        self.assertIn("Start-Sleep -Seconds 60", validation)
         self.assertIn("stop `\n                -t 60", validation)
         self.assertIn("rm -f airflow-init", validation)
 
