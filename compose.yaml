@@ -31,8 +31,6 @@ x-airflow-common: &airflow-common
     DEMANDFLOW_DOCKER_NETWORK: ${DEMANDFLOW_DOCKER_NETWORK}
     AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://airflow-api-server:8080/execution/
 
-    AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_JWT_SECRET}
-
     S3_INTERNAL_ENDPOINT: ${S3_INTERNAL_ENDPOINT:-http://minio:9000}
     S3_HEALTH_URL: http://minio:9000/minio/health/ready
     AWS_REGION: ${AWS_REGION}
@@ -567,6 +565,11 @@ services:
 
     command: api-server
 
+    environment:
+      <<: *airflow-common-env
+      AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_JWT_SECRET}
+      AIRFLOW__API__SECRET_KEY: ${AIRFLOW_API_SECRET_KEY}
+
     ports:
       - "127.0.0.1:8081:8080"
 
@@ -600,6 +603,11 @@ services:
       - orchestration
 
     command: scheduler
+
+    environment:
+      <<: *airflow-common-env
+      AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_JWT_SECRET}
+      AIRFLOW__API__SECRET_KEY: ${AIRFLOW_API_SECRET_KEY}
 
     depends_on:
       airflow-db:
@@ -665,6 +673,10 @@ services:
 
     command: triggerer
 
+    environment:
+      <<: *airflow-common-env
+      AIRFLOW__API__SECRET_KEY: ${AIRFLOW_API_SECRET_KEY}
+
     depends_on:
       airflow-db:
         condition: service_healthy
@@ -697,6 +709,12 @@ services:
 
     command: celery worker
 
+    environment:
+      <<: *airflow-common-env
+      AIRFLOW__API__SECRET_KEY: ${AIRFLOW_API_SECRET_KEY}
+      AIRFLOW__WORKERS__EXECUTION_API_TIMEOUT: "30"
+      AIRFLOW__WORKERS__MAX_FAILED_HEARTBEATS: "6"
+
     init: true
 
     depends_on:
@@ -708,16 +726,12 @@ services:
         condition: service_completed_successfully
 
     healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "celery --app airflow.providers.celery.executors.celery_executor.app inspect ping -d celery@$${HOSTNAME} --timeout 10"
-        ]
-      interval: 120s
-      timeout: 45s
-      retries: 3
+      test: ["CMD", "python", "/opt/airflow/demandflow/worker_healthcheck.py"]
+      interval: 30s
+      timeout: 5s
+      retries: 6
       start_period: 20s
-      start_interval: 15s
+      start_interval: 5s
 
     volumes:
       - ./airflow/dags:/opt/airflow/dags:ro
