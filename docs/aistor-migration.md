@@ -150,7 +150,7 @@ subir diretamente para oito CPUs nem iniciar a stack inteira para esse teste.
 Essas integrações passaram por consistência estática. A validação funcional de
 cada consumidor continua separada para não sobrecarregar a infraestrutura.
 
-### Endurecimento da imagem Spark em 07/10/2026
+### Endurecimento da imagem Spark
 
 - a base com R foi substituída por
   `apache/spark:3.5.9-scala2.12-java17-python3-ubuntu` fixada pelo digest OCI
@@ -162,7 +162,7 @@ cada consumidor continua separada para não sobrecarregar a infraestrutura.
 - a imagem final continua executando como usuário não privilegiado `spark`;
 - nenhuma aplicação ou contêiner foi iniciado durante a reconstrução.
 
-### Endurecimento estático do registro Debezium em 07/10/2026
+### Endurecimento estático do registro Debezium
 
 - a senha literal foi removida do JSON versionado sem ser exibida;
 - o template contém um marcador inválido até o momento da injeção, impedindo o
@@ -180,7 +180,7 @@ histórico do Git. A credencial anterior deve ser tratada como exposta até ser
 rotacionada no PostgreSQL e no `.env`. Reescrever o histórico não substitui a
 rotação e não faz parte deste bloco.
 
-### Estado da rotação da credencial CDC em 07/10/2026
+### Estado da rotação da credencial CDC
 
 `scripts/rotate-debezium-password.ps1` foi criado para executar uma rotação
 isolada: exige todos os demais serviços parados, inicia somente o PostgreSQL,
@@ -210,7 +210,7 @@ loopback `trust`. Eles não demonstravam dessincronização do volume. As tentat
 que alcançaram `ALTER ROLE` exercitaram o rollback SCRAM com restauração exata
 antes da execução final bem-sucedida.
 
-### Endurecimento da configuração PostgreSQL CDC em 07/10/2026
+### Endurecimento da configuração PostgreSQL CDC
 
 `scripts/configure-postgres-cdc.ps1` deixou de entregar `cdc_password` ao
 `psql` por argumento de processo. O SQL agora carrega usuário, banco e senha
@@ -244,7 +244,7 @@ do contêiner, necessário para `\getenv`, e um administrador do host/Docker pod
 inspecionar processos. A melhoria elimina a exposição em argumentos e saída,
 mas não transforma o ambiente local em um cofre de segredos.
 
-### Validação funcional CDC em 08/10/2026
+### Validação funcional CDC
 
 `scripts/validate-cdc.ps1` executou o caminho PostgreSQL → Debezium → Kafka e
 Generator de forma isolada. PostgreSQL, Kafka e Debezium foram iniciados nessa
@@ -304,7 +304,7 @@ Trivy, Grype e OSV Scanner não estão instalados. Portanto, a ausência de um
 inventário de CVEs continua sendo uma limitação conhecida; não deve ser
 interpretada como ausência de vulnerabilidades.
 
-### Smoke Spark + Delta em 07/10/2026
+### Smoke Spark + Delta
 
 O smoke foi executado com somente AIStor e um contêiner Spark temporário. A
 tabela `s3a://demandflow-bronze/smoke/products_delta` comprovou:
@@ -333,7 +333,7 @@ não-root `spark`; o volume contém apenas artefatos públicos do Ivy/Maven e n�
 recebe credenciais. O cache sobrevive aos contêineres executados com `--rm` e só
 é removido por uma operação explícita sobre volumes.
 
-### Cache Ivy persistente e validação Kafka → Raw em 09/10/2026
+### Cache Ivy persistente e validação Kafka → Raw
 
 Todos os scripts Spark e os contêineres criados pelo Airflow passaram a usar o
 mesmo volume Ivy. A imagem prepara `/opt/demandflow/.ivy2` para o usuário
@@ -393,7 +393,7 @@ alternativa mais forte seria incorporar JARs verificados por hash à imagem.
 Neste ambiente local de um único operador, o volume troca essa superfície
 residual por menos rede, escrita e tempo de CPU em cada execução.
 
-### Recuperação controlada do snapshot Raw em 09/10/2026
+### Recuperação controlada do snapshot Raw
 
 O Debezium permaneceu em `snapshot.mode=initial`; offsets, tópicos e dados de
 origem não foram apagados ou resetados. O connector passou a aceitar sinais
@@ -466,7 +466,7 @@ Após confirmar `CURRENT-OFFSET=1`, `LOG-END-OFFSET=1` e `LAG=0` no grupo
 `kafka-signal`, o template final também foi sincronizado no estado persistente
 do Kafka Connect; a API confirmou somente as propriedades não secretas.
 
-### Validação Raw → Bronze em 09/10/2026
+### Validação Raw → Bronze
 
 A transformação passou a escolher explicitamente a imagem `before` somente
 para `DELETE` e a imagem `after` para `READ`, `CREATE` e `UPDATE`. O uso anterior
@@ -517,7 +517,7 @@ repetição, comparação de versões e limpeza. Somente AIStor e um job Spark
 efêmero ficaram ativos por vez; todos os serviços foram confirmados parados no
 final.
 
-### Validação Bronze → Silver em 09/10/2026
+### Validação Bronze → Silver
 
 A transformação Silver passou a aplicar um contrato explícito por tabela para
 tipos, campos obrigatórios, strings não vazias, enums, chaves primárias e chaves
@@ -573,7 +573,7 @@ auditorias, a comparação de métricas e a limpeza. Somente AIStor e um job Spa
 efêmero ficaram ativos por vez; todos os serviços foram confirmados parados ao
 final do bloco.
 
-### Validação Silver → Gold em 10/10/2026
+### Validação Silver → Gold
 
 A camada Gold passou a materializar quatro contratos determinísticos:
 `daily_sales`, `product_sales`, `inventory_health` e `forecast_accuracy`. Cada
@@ -619,7 +619,7 @@ e versões. `scripts/validate-gold-pipeline.ps1` automatiza as duas passagens,
 as duas auditorias e a limpeza. Somente AIStor e um job Spark efêmero ficaram
 ativos por vez; todos os serviços foram confirmados parados ao final.
 
-### Validação Hive Metastore, Trino e Superset em 10/10/2026
+### Validação Hive Metastore, Trino e Superset
 
 O Hive Metastore passou a publicar um healthcheck Thrift real. O script abre e
 fecha uma conexão TCP local sem enviar payload, e o Trino depende agora de
