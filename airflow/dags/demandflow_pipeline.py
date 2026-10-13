@@ -173,7 +173,6 @@ with DAG(
 
     max_active_tasks=1,
 
-    dagrun_timeout=timedelta(hours=3),
 
     default_args=DEFAULT_ARGS,
 
