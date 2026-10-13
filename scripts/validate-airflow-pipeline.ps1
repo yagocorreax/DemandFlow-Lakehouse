@@ -380,7 +380,7 @@ function Wait-DagRunSuccess {
         [Parameter(Mandatory)]
         [string]$RunId,
 
-        [int]$Attempts = 180
+        [int]$Attempts = 60
     )
 
     $lastState = $null
@@ -408,7 +408,7 @@ function Wait-DagRunSuccess {
             throw "O DAG $RunId terminou em falha."
         }
 
-        Start-Sleep -Seconds 20
+        Start-Sleep -Seconds 60
     }
 
     throw "O DAG $RunId não terminou dentro da janela de uma hora."
@@ -531,6 +531,10 @@ Push-Location $projectRoot
 try {
     if (-not (Test-Path -LiteralPath $envFile -PathType Leaf)) {
         throw "Arquivo .env não encontrado."
+    }
+    & "$PSScriptRoot\ensure-airflow-secrets.ps1"
+    if ($LASTEXITCODE -ne 0) {
+        throw "A preparação dos segredos do Airflow falhou."
     }
     $envText = [System.IO.File]::ReadAllText($envFile)
     $airflowDbUser = Get-DotEnvValue $envText "AIRFLOW_DB_USER"
