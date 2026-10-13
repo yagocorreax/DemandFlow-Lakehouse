@@ -67,8 +67,6 @@ Os nomes utilizados por `s3://` e `s3a://` são exatamente:
 - `demandflow-quarantine`
 - `demandflow-checkpoints`
 
-Não existe o marcador `dev` nos nomes.
-
 `scripts/bootstrap-s3.ps1` executa `infra/minio/bootstrap.sh` dentro do próprio
 AIStor. O bootstrap é idempotente e:
 
@@ -194,7 +192,7 @@ do `.env` usa `File.Replace` com backup explícito, ACL preservada e limpeza dos
 temporários. O verificador anterior é restaurado e comparado byte a byte em
 qualquer falha ocorrida antes da confirmação final.
 
-A rotação foi concluída em 07/10/2026:
+A rotação foi concluída:
 
 - o verificador SCRAM original foi preservado antes do `ALTER ROLE`;
 - a nova credencial autenticou e a credencial anterior foi rejeitada;
