@@ -18,3 +18,7 @@ COPY --chown=airflow:root --chmod=0440 \
 COPY --chown=airflow:root --chmod=0440 \
     infra/airflow/job_healthcheck.py \
     /opt/airflow/demandflow/job_healthcheck.py
+
+COPY --chown=airflow:root --chmod=0440 \
+    infra/airflow/worker_healthcheck.py \
+    /opt/airflow/demandflow/worker_healthcheck.py
