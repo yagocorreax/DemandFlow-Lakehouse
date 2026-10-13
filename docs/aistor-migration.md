@@ -770,29 +770,3 @@ de qualquer escrita. Não montar o volume AIStor no LocalStack nem o volume
 LocalStack no AIStor. Variáveis antigas presentes no `.env` estão preservadas,
 mas não são consumidas pela configuração atual.
 
-## Próximos blocos
-
-Cada bloco exige nova autorização e termina com os serviços parados:
-
-1. validar o DAG Airflow ponta a ponta, repetibilidade e retomada;
-2. executar a auditoria final de segurança/desempenho, incluindo heartbeat e
-   `ConfigProvider` do CDC, inventário de CVEs na
-   medida em que uma ferramenta estiver disponível, documentação e checklist
-   de entrega.
-
-Esses são dois blocos controlados restantes. A separação dos componentes é
-intencional para limitar CPU e memória; falhas que exijam correção e nova
-execução podem acrescentar tentativas, mas não novos blocos planejados.
-
-## Referências oficiais
-
-- [AIStor em contêiner e licença Free](https://docs.min.io/aistor/installation/container/install/)
-- [Configuração do servidor AIStor](https://docs.min.io/aistor/reference/aistor-server/settings/)
-- [Identidades locais e políticas](https://docs.min.io/aistor/administration/iam/identity/built-in-identity/)
-- [Expansão de ambiente no Hadoop](https://hadoop.apache.org/docs/r3.3.6/api/org/apache/hadoop/conf/Configuration.html)
-- [Validação do Docker Compose](https://docs.docker.com/reference/cli/docker/compose/config/)
-- [PostgreSQL 16: restauração de senhas criptografadas de papéis](https://www.postgresql.org/docs/16/sql-createrole.html)
-- [PostgreSQL 16: `psql`, `\getenv` e interpolação segura](https://www.postgresql.org/docs/16/app-psql.html)
-- [PostgreSQL 16: funções de consulta de privilégios](https://www.postgresql.org/docs/16/functions-info.html)
-- [Debezium 3.6: connector PostgreSQL e snapshots ad hoc](https://debezium.io/documentation/reference/3.6/connectors/postgresql.html)
-- [Apache Kafka 4.3: configurações de retenção do broker](https://kafka.apache.org/43/configuration/broker-configs/)
