@@ -20,7 +20,7 @@ O pipeline permite responder perguntas como:
 
 ```mermaid
 flowchart LR
-    GEN["Gerador de dados"] --> PG["PostgreSQL 16<br/>fonte OLTP"]
+    GEN["Gerador de dados"] --> PG["PostgreSQL <br/>fonte OLTP"]
     PG -->|"WAL / logical replication"| DBZ["Debezium Connect"]
     DBZ -->|"eventos CDC"| KAFKA["Apache Kafka<br/>KRaft"]
     KAFKA -->|"Spark Structured Streaming"| RAW["Raw<br/>Parquet imutável"]
@@ -31,7 +31,7 @@ flowchart LR
         CURRENT --> DQ{"Data Quality"}
         DQ -->|"válidos"| SILVER["Silver<br/>tipada e padronizada"]
         DQ -->|"inválidos"| QUARANTINE["Quarantine<br/>erros + payload"]
-        SILVER --> GOLD["Gold<br/>marts analíticos"]
+        SILVER --> GOLD["Gold<br/>Analítica e decisional"]
     end
 
     GOLD --> HIVE["Hive Metastore"]
