@@ -135,38 +135,6 @@ Mais detalhes estão em [`docs/aistor-migration.md`](docs/aistor-migration.md).
 
 As versões são fixadas no [`compose.yaml`](compose.yaml), nos Dockerfiles e na DAG para evitar combinações incompatíveis entre Spark, Delta Lake e os conectores.
 
-## Organização do repositório
-
-```text
-DemandFlow Lakehouse/
-├── airflow/
-│   └── dags/                    # DAG principal e smoke tests do Airflow
-├── config/
-│   ├── debezium/                # Template seguro do connector PostgreSQL
-│   └── tables.json              # Contratos das oito entidades
-├── docs/                        # Decisões e evidências técnicas
-├── infra/
-│   ├── airflow/                 # Imagem, inicialização e healthchecks
-│   ├── hive-metastore/          # Imagem e configuração S3A
-│   ├── minio/                   # Bootstrap e política de menor privilégio
-│   ├── postgres/                # Schema, seed e configuração CDC
-│   ├── spark/                   # Imagem Spark não privilegiada
-│   ├── superset/                # Imagem, configuração e inicialização
-│   └── trino/                   # Catálogo Delta
-├── scripts/                     # Operação, recuperação e validações por bloco
-├── src/
-│   ├── generator/               # Gerador de mudanças transacionais
-│   └── spark/
-│       ├── raw/
-│       ├── bronze/
-│       ├── silver/
-│       ├── gold/
-│       └── smoke/
-├── tests/                       # Testes estáticos de contratos e segurança
-├── compose.yaml
-└── requirements.txt
-```
-
 ## Perfis de execução
 
 | Profile | Serviços principais | Uso |
