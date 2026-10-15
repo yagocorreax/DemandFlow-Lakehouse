@@ -160,8 +160,6 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-storage.ps1 -B
 
 ### Validação recomendada em blocos
 
-A stack completa consome mais recursos do que o notebook local suporta com estabilidade. O caminho recomendado é validar uma etapa por vez; os scripts iniciam apenas as dependências necessárias e encerram os serviços ao final:
-
 ```powershell
 # PostgreSQL → Debezium → Kafka e gerador
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/validate-cdc.ps1
@@ -192,8 +190,6 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/validate-static-synt
 .venv\Scripts\python.exe -B -m unittest discover -s tests -p test_storage_migration.py -v
 git diff --check
 ```
-
-Não use `docker compose down -v` como forma de parada: a opção `-v` remove os volumes que guardam banco, tópicos, tabelas, checkpoints e metadados.
 
 ## Interfaces locais
 
