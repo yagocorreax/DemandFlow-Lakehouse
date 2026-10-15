@@ -135,17 +135,6 @@ Mais detalhes estão em [`docs/aistor-migration.md`](docs/aistor-migration.md).
 
 As versões são fixadas no [`compose.yaml`](compose.yaml), nos Dockerfiles e na DAG para evitar combinações incompatíveis entre Spark, Delta Lake e os conectores.
 
-## Perfis de execução
-
-| Profile | Serviços principais | Uso |
-| --- | --- | --- |
-| padrão | PostgreSQL e MinIO | Origem e armazenamento persistentes. |
-| `cdc` | Kafka e Debezium | Captura de mudanças. |
-| `processing` | Spark | Jobs manuais ou smoke tests. |
-| `query` | Hive Metastore e Trino | Catálogo e acesso SQL. |
-| `bi` | Hive, Trino e Superset | Consulta e visualização. |
-| `orchestration` | Kafka, Debezium, PostgreSQL/Redis do Airflow e componentes Airflow | Execução orquestrada. |
-
 ## Execução local
 
 ### Pré-requisitos
