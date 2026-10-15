@@ -96,7 +96,7 @@ flowchart LR
     H --> I["validate_gold"]
 ```
 
-O Airflow 3 usa `CeleryExecutor`, Redis como broker e uma instância PostgreSQL separada para metadados. Cada tarefa de dados usa `DockerOperator` para iniciar a imagem `demandflow-spark:3.5.9` na rede do projeto. O paralelismo está limitado a uma tarefa para respeitar a capacidade da máquina local, e o cache Ivy persiste os artefatos Maven entre containers efêmeros.
+O Airflow usa `CeleryExecutor`, Redis como broker e uma instância PostgreSQL separada para metadados. Cada tarefa de dados usa `DockerOperator` para iniciar a imagem `demandflow-spark:3.5.9` na rede do projeto.
 
 ## Armazenamento
 
