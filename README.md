@@ -198,14 +198,3 @@ Quando os respectivos serviços estiverem ativos, as portas publicadas ficam lim
 | Airflow | `http://127.0.0.1:8081` |
 | Superset | `http://127.0.0.1:8088` |
 
-## Princípios preservados
-
-- Raw é imutável;
-- Kafka transporta eventos, mas não substitui o Lakehouse;
-- Bronze Events e Bronze Current têm responsabilidades diferentes;
-- ordenação técnica prioriza LSN e metadados Kafka;
-- reprocessamento precisa ser idempotente;
-- registros inválidos não desaparecem: seguem para Quarantine;
-- Superset consulta a Gold por meio do Trino;
-- limitações do notebook alteram a estratégia de execução, não o desenho lógico da arquitetura.
-
