@@ -198,20 +198,6 @@ Quando os respectivos serviços estiverem ativos, as portas publicadas ficam lim
 | Airflow | `http://127.0.0.1:8081` |
 | Superset | `http://127.0.0.1:8088` |
 
-## Segurança e limites do ambiente
-
-- secrets, licença e credenciais ficam fora do Git e não são gravados no código;
-- as imagens e scripts usam uma identidade S3 de menor privilégio, separada do administrador do storage;
-- as portas são vinculadas a `127.0.0.1`, evitando exposição direta na rede externa;
-- o worker Airflow monta o Docker socket e, portanto, possui privilégio elevado sobre o Docker local;
-- Kafka, Trino e o tráfego interno operam sem TLS no ambiente local;
-- MinIO funciona em nó único, sem alta disponibilidade e sem substituir uma estratégia de backup;
-- o Superset usa metadados SQLite e rate limiting em memória, adequados ao teste local de instância única, não a uso multiusuário;
-- o Trino local não possui autenticação nem TLS;
-- as validações provam o caminho funcional exercitado, não a ausência de CVEs nas imagens.
-
-Antes de qualquer exposição externa ou uso multiusuário, são necessários TLS, autenticação no Trino/Kafka, banco de metadados suportado para o Superset, gestão centralizada de secrets, backups e dimensionamento de recursos.
-
 ## Princípios preservados
 
 - Raw é imutável;
