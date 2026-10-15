@@ -198,22 +198,6 @@ Quando os respectivos serviços estiverem ativos, as portas publicadas ficam lim
 | Airflow | `http://127.0.0.1:8081` |
 | Superset | `http://127.0.0.1:8088` |
 
-## Estado validado
-
-Na validação funcional de referência de **14/10/2026**:
-
-- a Raw continha 479 eventos únicos, incluindo o snapshot completo das oito entidades e eventos CDC;
-- a Bronze preservou os 479 eventos e recompôs 461 registros atuais, sem eventos ausentes, extras ou divergentes;
-- a Silver classificou os 461 registros como válidos, sem órfãos e sem registros em Quarantine nesse conjunto;
-- a Gold produziu 289 linhas: 13 em `daily_sales`, 6 em `product_sales`, 18 em `inventory_health` e 252 em `forecast_accuracy`;
-- Hive Metastore, Trino e Superset consultaram as quatro tabelas Gold com reconciliação das métricas;
-- os sete componentes do Airflow ficaram saudáveis, a DAG foi importada sem erros e apresentou exatamente as nove tarefas esperadas;
-- reexecuções das camadas não alteraram contagens nem versões Delta quando a origem permaneceu igual.
-
-Essas quantidades descrevem o snapshot de teste e mudam quando o gerador cria novas transações. Elas não são constantes de negócio.
-
-A tentativa de manter todos os serviços ativos ao mesmo tempo excedeu a capacidade do Docker Desktop no notebook. Por isso, a comprovação final foi feita por blocos isolados e repetíveis. O projeto está funcionalmente validado dessa forma, mas isso não equivale a teste de carga, alta disponibilidade ou certificação para produção.
-
 ## Segurança e limites do ambiente
 
 - secrets, licença e credenciais ficam fora do Git e não são gravados no código;
