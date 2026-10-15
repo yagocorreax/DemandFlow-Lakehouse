@@ -183,14 +183,6 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/validate-query-stack
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/validate-airflow-pipeline.ps1
 ```
 
-Validação estática, sem executar o pipeline de dados:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/validate-static-syntax.ps1
-.venv\Scripts\python.exe -B -m unittest discover -s tests -p test_storage_migration.py -v
-git diff --check
-```
-
 ## Interfaces locais
 
 Quando os respectivos serviços estiverem ativos, as portas publicadas ficam limitadas ao loopback do host:
