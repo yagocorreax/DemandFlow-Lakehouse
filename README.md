@@ -65,7 +65,7 @@ flowchart LR
 | Bronze Current | Delta Lake | Estado atual das oito entidades, reconstruível a partir de Bronze Events. |
 | Silver | Delta Lake | Dados tipados, padronizados, íntegros e aprovados pelas regras de qualidade. |
 | Quarantine | Delta Lake | Registros rejeitados, seus metadados e a lista de regras violadas. (fora do escopo esperado) |
-| Gold | Delta Lake | Agregações e métricas prontas para consulta analítica. |
+| Gold | Delta Lake | Agregações e métricas prontas para consulta analítica e tomada de decisões. |
 
 Desde a Bronze, as tabelas usam transações ACID, `MERGE`, Change Data Feed e verificações de idempotência. Uma repetição sem mudança não deve criar linhas, arquivos ou versões Delta desnecessárias.
 
