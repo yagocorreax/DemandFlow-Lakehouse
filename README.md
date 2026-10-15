@@ -51,7 +51,7 @@ flowchart LR
 3. O Debezium converte `INSERT`, `UPDATE` e `DELETE` em eventos CDC e os envia aos tópicos Kafka `demandflow.public.*`.
 4. O Spark Structured Streaming consome os tópicos, cria um `event_id` determinístico e grava a Raw em Parquet, preservando o evento técnico original e o checkpoint do streaming.
 5. A Bronze materializa duas visões Delta: `Events`, com o histórico completo, e `Current`, com o último estado válido de cada chave após `MERGE` e tombstones de exclusão.
-6. A Silver aplica tipos, contratos, chaves e regras de negócio. Registros válidos seguem para Silver; inválidos vão para Quarantine com os erros de qualidade e o payload de origem.
+6. A Silver aplica tipos, contratos, chaves e regras de negócio. Registros válidos seguem para Silver, inválidos vão para Quarantine com os erros de qualidade e o payload de origem.
 7. A Gold agrega a Silver em quatro produtos analíticos determinísticos.
 8. O Hive Metastore cataloga as tabelas, o Trino oferece acesso SQL e o Superset consome exclusivamente a Gold.
 9. O Airflow coordena as transformações e validações por meio de containers Spark efêmeros.
@@ -64,7 +64,7 @@ flowchart LR
 | Bronze Events | Delta Lake | Histórico deduplicado por `event_id`, preservando todas as mudanças recebidas. |
 | Bronze Current | Delta Lake | Estado atual das oito entidades, reconstruível a partir de Bronze Events. |
 | Silver | Delta Lake | Dados tipados, padronizados, íntegros e aprovados pelas regras de qualidade. |
-| Quarantine | Delta Lake | Registros rejeitados, seus metadados e a lista de regras violadas. |
+| Quarantine | Delta Lake | Registros rejeitados, seus metadados e a lista de regras violadas. (fora do escopo esperado) |
 | Gold | Delta Lake | Agregações e métricas prontas para consulta analítica. |
 
 Desde a Bronze, as tabelas usam transações ACID, `MERGE`, Change Data Feed e verificações de idempotência. Uma repetição sem mudança não deve criar linhas, arquivos ou versões Delta desnecessárias.
